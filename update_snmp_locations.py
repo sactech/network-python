@@ -6,9 +6,30 @@ def update_snmp_location(device_info):
     try:
         # Establishing a connection to the device
         with ConnectHandler(**device_info) as conn:
-            command = f"snmp-server location {device_info['new_snmp_location']}"
-            output = conn.send_config_set(command)
-            print(f"Successfully updated {device_info['host']}:\n{output}")
+            print(f"Connecting to {device_info['host']}...")
+
+            # Update SNMP location
+            snmp_command = f"snmp-server location {device_info['new_snmp_location']}"
+            conn.send_config_set(snmp_command)
+            print(f"SNMP location updated for {device_info['host']}.")
+
+            # Save the configuration
+            save_command = 'copy running-config startup-config'
+            output = conn.send_command_timing(save_command)
+            if 'Destination filename [startup-config]?' in output:
+                output += conn.send_command_timing('\n')  # Confirm the save if prompted
+            if 'Copy in progress' in output:
+                print(f"Configuration save initiated for {device_info['host']}. Waiting for completion...")
+            else:
+                print(f"Unexpected response during save: {output}")
+
+            # Check for completion (optional, based on your device's response)
+            # You may need to adjust this part according to the specific response of your devices
+            if 'bytes copied in' in output:
+                print(f"Configuration successfully saved for {device_info['host']}.")
+            else:
+                print(f"Could not confirm if configuration was saved for {device_info['host']}. Please verify manually.")
+            
     except NetmikoTimeoutException:
         print(f"Connection timed out for {device_info['host']}")
     except NetmikoAuthenticationException:
@@ -32,8 +53,8 @@ for device in devices_list:
     device_params = {
         'device_type': 'cisco_ios',  # or appropriate type for your devices
         'host': device['ip'],
-        'username': 'testuser',  # Test username
-        'password': 'testpass',  # Test password
+        'username': 'your_username',  # replace with your username
+        'password': 'your_password',  # replace with your password
         'new_snmp_location': device['new_snmp_location']
     }
 
