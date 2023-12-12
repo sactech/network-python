@@ -1,0 +1,7 @@
+devices:
+  - ip: router1.example.com
+    new_snmp_location: "Building A, Room 101"
+  - ip: switch1.example.com
+    new_snmp_location: "Building B, Server Room"
+  - ip: router2.example.com
+    new_snmp_location: "Building C, Data Center"
