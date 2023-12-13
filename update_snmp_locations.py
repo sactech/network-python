@@ -2,14 +2,14 @@ import yaml
 from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
 
 # Function to update SNMP location on a device
-def update_snmp_location(device_info):
+def update_snmp_location(device_info, new_snmp_location):
     try:
         # Establishing a connection to the device
         with ConnectHandler(**device_info) as conn:
             print(f"Connecting to {device_info['host']}...")
 
             # Update SNMP location
-            snmp_command = f"snmp-server location {device_info['new_snmp_location']}"
+            snmp_command = f"snmp-server location {new_snmp_location}"
             conn.send_config_set(snmp_command)
             print(f"SNMP location updated for {device_info['host']}.")
 
@@ -18,8 +18,9 @@ def update_snmp_location(device_info):
             output = conn.send_command_timing(save_command)
             if 'Destination filename [startup-config]?' in output:
                 output += conn.send_command_timing('\n')  # Confirm the save if prompted
-            if 'Copy in progress' in output:
+            if 'Copy in progress' in output or 'bytes copied in' in output:
                 print(f"Configuration save initiated for {device_info['host']}. Waiting for completion...")
+                # Additional confirmation step can be added here if needed
             else:
                 print(f"Unexpected response during save: {output}")
 
@@ -51,11 +52,11 @@ except yaml.YAMLError as exc:
 # Iterate over each device and change SNMP location
 for device in devices_list:
     device_params = {
-        'device_type': 'cisco_ios',  # or appropriate type for your devices
+        'device_type': 'cisco_ios',  # or the appropriate device type
         'host': device['ip'],
-        'username': 'your_username',  # replace with your username
-        'password': 'your_password',  # replace with your password
-        'new_snmp_location': device['new_snmp_location']
+        'username': 'your_username',  # replace with your actual username
+        'password': 'your_password',  # replace with your actual password
     }
 
-    update_snmp_location(device_params)
+    # Call the function with the separate SNMP location
+    update_snmp_location(device_params, device['new_snmp_location'])
