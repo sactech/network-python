@@ -27,10 +27,11 @@ def fetch_fex_details(ip, username, password):
     fex_lines = fex_output.strip().split("\n")[1:]  # Skip the header line
     for line in fex_lines:
         columns = line.split()
-        if len(columns) > 2 and columns[2].lower() == "online":  # Check FEX status
+        if len(columns) > 4 and columns[2].lower() == "online":  # Check FEX status and ensure there are enough columns
             fex_number = columns[0]
+            fex_serial_number = columns[-1]  # Assuming the last column is the serial number
             active_interfaces_count = fetch_active_interface_count(ip, username, password, fex_number)
-            fex_details.append((fex_number, active_interfaces_count))
+            fex_details.append((fex_number, fex_serial_number, active_interfaces_count))
     return fex_details
 
 def fetch_active_interface_count(ip, username, password, fex_number):
@@ -51,17 +52,16 @@ def main():
     for ip in devices['nexus_switches']:
         print(f"Connecting to Nexus switch: {ip}")
         try:
-            serial_number = fetch_data_from_device(ip, username, password, "show version | include 'Processor Board ID'").split()[-1]
             fex_details = fetch_fex_details(ip, username, password)
-            for fex_number, active_count in fex_details:
-                nexus_data.append([ip, serial_number, fex_number, active_count])
+            for fex_number, fex_serial_number, active_count in fex_details:
+                nexus_data.append([ip, fex_number, fex_serial_number, active_count])
         except Exception as e:
             print(f"Error processing data from Nexus switch {ip}: {e}")
 
     # Output to a file
     output_file = 'nexus_report.csv'
     with open(output_file, 'w') as file:
-        file.write("Switch IP,Serial Number,FEX ID,Active Ports\n")
+        file.write("Switch IP,FEX ID,FEX Serial Number,Active Ports\n")
         for entry in nexus_data:
             file.write(','.join(map(str, entry)) + '\n')
 
