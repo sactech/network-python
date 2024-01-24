@@ -1,0 +1,87 @@
+import paramiko
+import yaml
+import smtplib
+from email.message import EmailMessage
+from getpass import getpass
+
+def read_yaml_file(filename):
+    with open(filename, 'r') as file:
+        data = yaml.safe_load(file)
+    return data
+
+def send_email(sender, recipient, subject, body, attachment=None, smtp_server='smtp.example.com', smtp_port=587):
+    msg = EmailMessage()
+    msg['From'] = sender
+    msg['To'] = recipient
+    msg['Subject'] = subject
+    msg.set_content(body)
+
+    if attachment:
+        with open(attachment, 'rb') as f:
+            file_data = f.read()
+            file_name = f.name
+        msg.add_attachment(file_data, maintype='application', subtype='octet-stream', filename=file_name)
+
+    with smtplib.SMTP(smtp_server, smtp_port) as server:
+        server.starttls()
+        server.login(sender, getpass(f"Enter password for {sender}: "))
+        server.send_message(msg)
+
+def fetch_data_from_device(ip, username, password, command):
+    ssh_client = paramiko.SSHClient()
+    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh_client.connect(ip, username=username, password=password)
+        stdin, stdout, stderr = ssh_client.exec_command(command)
+        output = stdout.read().decode()
+    except Exception as e:
+        print(f"Error connecting to device {ip}: {e}")
+        return ''
+    finally:
+        ssh_client.close()
+    return output
+
+def main():
+    devices = read_yaml_file("devices.yaml")
+    username = input("Enter SSH username: ")
+    password = getpass("Enter SSH password: ")
+
+    nexus_data = []
+
+    for ip in devices['nexus_switches']:
+        print(f"Connecting to Nexus switch: {ip}")
+        try:
+            serial_number = fetch_data_from_device(ip, username, password, "show version | include 'Processor board ID'").split()[-1]
+
+            fex_output = fetch_data_from_device(ip, username, password, "show fex")
+            fex_lines = fex_output.split("\n")[1:]  # Skip header line
+            for line in fex_lines:
+                columns = line.split()
+                if len(columns) >= 2:
+                    fex_id = columns[0]
+                    fex_status = columns[1]
+                    if fex_status.lower() == "online":
+                        active_ports_count = fetch_data_from_device(ip, username, password, f"show interface fex-fabric {fex_id} | include 'up'").count('\n')
+                        nexus_data.append([ip, serial_number, fex_id, active_ports_count])
+
+        except Exception as e:
+            print(f"Error processing data from Nexus switch {ip}: {e}")
+
+    # Output to a file (optional)
+    output_file = 'nexus_report.csv'
+    with open(output_file, 'w') as file:
+        file.write("Switch IP,Serial Number,FEX ID,Active Ports\n")
+        for entry in nexus_data:
+            file.write(','.join(map(str, entry)) + '\n')
+
+    print(f"\nNexus data written to {output_file}.")
+
+    # Send email with results
+    sender_email = "your_email@example.com"
+    recipient_email = "recipient_email@example.com"
+    subject = "Nexus Switch Report"
+    body = "Please find attached the Nexus Switch Report."
+    send_email(sender_email, recipient_email, subject, body, attachment=output_file)
+
+if __name__ == "__main__":
+    main()
