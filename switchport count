@@ -1,0 +1,64 @@
+import paramiko
+import yaml
+from getpass import getpass
+
+def read_yaml_file(filename):
+    with open(filename, 'r') as file:
+        data = yaml.safe_load(file)
+    return data
+
+def fetch_data_from_device(ip, username, password, command):
+    ssh_client = paramiko.SSHClient()
+    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh_client.connect(ip, username=username, password=password)
+        stdin, stdout, stderr = ssh_client.exec_command(command)
+        output = stdout.read().decode()
+    except Exception as e:
+        print(f"Error connecting to device {ip}: {e}")
+        return ''
+    finally:
+        ssh_client.close()
+    return output
+
+def fetch_serial_number(ip, username, password):
+    serial_output = fetch_data_from_device(ip, username, password, "show version | include 'Processor Board ID'")
+    # Assuming the last word in the line is the serial number
+    serial_number = serial_output.split()[-1] if serial_output else "Unknown"
+    return serial_number
+
+def count_connected_eth_ports(ip, username, password):
+    connected_count = 0
+    interface_status_output = fetch_data_from_device(ip, username, password, "show interface status | include 'Eth'")
+    for line in interface_status_output.strip().split("\n"):
+        if "connected" in line.lower() and line.startswith('Eth'):
+            connected_count += 1
+    return connected_count
+
+def main():
+    devices = read_yaml_file("devices.yaml")
+    username = input("Enter SSH username: ")
+    password = getpass("Enter SSH password: ")
+
+    nexus_data = []
+
+    for ip in devices['nexus_switches']:
+        print(f"Connecting to Nexus switch: {ip}")
+        try:
+            serial_number = fetch_serial_number(ip, username, password)
+            connected_eth_ports = count_connected_eth_ports(ip, username, password)
+            nexus_data.append([ip, serial_number, connected_eth_ports])
+        except Exception as e:
+            print(f"Error processing data from Nexus switch {ip}: {e}")
+
+    # Output to a file
+    output_file = 'nexus_9396px_report.csv'
+    with open(output_file, 'w') as file:
+        file.write("Switch IP,Serial Number,Connected Ethernet Ports\n")
+        for entry in nexus_data:
+            file.write(','.join(map(str, entry)) + '\n')
+
+    print(f"Nexus 9396PX data written to {output_file}.")
+
+if __name__ == "__main__":
+    main()
