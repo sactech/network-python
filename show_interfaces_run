@@ -23,36 +23,25 @@ def create_ssh_client(hostname, username, password):
 # Function to execute a command on the device and return the output
 def execute_command(ssh_client, command):
     stdin, stdout, stderr = ssh_client.exec_command(command)
-    return stdout.read().decode('utf-8').strip()
+    output = stdout.read().decode('utf-8')
+    error = stderr.read().decode('utf-8')
+    if error:
+        print(f"Error while executing command '{command}': {error}")
+    return output.strip()
 
 # Function to parse 'show ip int brief' output for Nexus devices
 def parse_nexus_ip_int_brief(output):
-    pattern = re.compile(r'(\S+)\s+(\d+\.\d+\.\d+\.\d+)\s+.*\s+(up|down)\s+(up|down)')
-    data = []
-    for line in output.split('\n'):
-        match = pattern.match(line)
-        if match:
-            data.append({
-                'Interface': match.group(1),
-                'IP Address': match.group(2),
-                'Status': match.group(3),
-                'Protocol': match.group(4)
-            })
-    return data
+    print("Raw output from Nexus device:")
+    print(output)  # Debug print
+    # Include your parsing logic here based on the output format
+    return []
 
-# Function to parse 'show int status' output for Catalyst devices
+# Function to parse 'show int status | include connected' output for Catalyst devices
 def parse_catalyst_int_status(output):
-    pattern = re.compile(r'(\S+)\s+connected\s+.*\s+(\d+)\s+.*')
-    data = []
-    for line in output.split('\n'):
-        match = pattern.match(line)
-        if match:
-            data.append({
-                'Interface': match.group(1),
-                'VLAN': match.group(2),
-                'Status': 'connected'
-            })
-    return data
+    print("Raw output from Catalyst device:")
+    print(output)  # Debug print
+    # Include your parsing logic here based on the output format
+    return []
 
 # Main execution function
 def main():
