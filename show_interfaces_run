@@ -4,12 +4,12 @@ import yaml
 import paramiko
 from getpass import getpass
 
-# Load devices from the YAML file
+# Function to load devices from YAML file
 def load_devices(yaml_file_path):
     with open(yaml_file_path) as file:
         return yaml.safe_load(file)
 
-# Create an SSH client and connect to a device
+# Function to create an SSH client and connect to a device
 def create_ssh_client(hostname, username, password):
     ssh_client = paramiko.SSHClient()
     ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -20,12 +20,12 @@ def create_ssh_client(hostname, username, password):
         print(f"An error occurred while connecting to {hostname}: {e}")
         return None
 
-# Execute a command on the device and return the output
+# Function to execute a command on the device and return the output
 def execute_command(ssh_client, command):
     stdin, stdout, stderr = ssh_client.exec_command(command)
     return stdout.read().decode('utf-8').strip()
 
-# Parse the 'show ip int brief' output for Nexus devices
+# Function to parse 'show ip int brief' output for Nexus devices
 def parse_nexus_ip_int_brief(output):
     pattern = re.compile(r'(\S+)\s+(\d+\.\d+\.\d+\.\d+)\s+.*\s+(up|down)\s+(up|down)')
     data = []
@@ -40,7 +40,7 @@ def parse_nexus_ip_int_brief(output):
             })
     return data
 
-# Parse the 'show int status | include connected' output for Catalyst devices
+# Function to parse 'show int status' output for Catalyst devices
 def parse_catalyst_int_status(output):
     pattern = re.compile(r'(\S+)\s+connected\s+.*\s+(\d+)\s+.*')
     data = []
@@ -67,9 +67,34 @@ def main():
 
     # Iterate over each device category and device within it
     for category, device_list in devices_by_category.items():
-        for device_info in device_list:
-            hostname = device_info['host']
+        for device in device_list:
+            hostname = device['host']
             print(f"Processing {category} device: {hostname}...")
 
-            # Ensure hostname is a string
-            if not isinstance(hostname,**⬤**
+            # Connect to the device
+            ssh_client = create_ssh_client(hostname, username, password)
+            if ssh_client:
+                try:
+                    # Execute and parse commands based on device category
+                    if category.lower() == 'nexus':
+                        command = 'show ip int brief vrf all'
+                        output = execute_command(ssh_client, command)
+                        parsed_data = parse_nexus_ip_int_brief(output)
+                        all_device_data.extend(parsed_data)
+                    elif category.lower() == 'catalyst':
+                        command = 'show int status | include connected'
+                        output = execute_command(ssh_client, command)
+                        parsed_data = parse_catalyst_int_status(output)
+                        all_device_data.extend(parsed_data)
+                except Exception as e:
+                    print(f"An error occurred while processing {hostname}: {e}")
+                finally:
+                    ssh_client.close()
+
+    # Convert the aggregated data to a DataFrame and output to a CSV file
+    df = pd.DataFrame(all_device_data)
+    df.to_csv('network_data.csv', index=False)
+    print("Data collection complete. CSV file created.")
+
+if __name__ == "__main__":
+    main()
