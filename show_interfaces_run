@@ -4,49 +4,55 @@ import yaml
 import paramiko
 from getpass import getpass
 
-# Define the regular expressions for parsing the outputs
-l3_interface_regex = re.compile(r'(\S+)\s+(\d+\.\d+\.\d+\.\d+)\s+.*\s+(up|down)\s+(up|down)')
-l2_interface_regex = re.compile(r'(\S+)\s+connected\s+.*\s+(\d+)\s+.*')
-interface_config_regex = re.compile(r'interface (\S+)|(description .+)|(ip address \d+\.\d+\.\d+\.\d+/\d+)|'
-                                    r'(switchport access vlan \d+)|(switchport mode \S+)|(switchport trunk allowed vlan .+)|'
-                                    r'(switchport trunk native vlan \d+)|(vrf member \S+)')
+# Function to load devices from YAML file
+def load_devices(yaml_file_path):
+    with open(yaml_file_path) as file:
+        return yaml.safe_load(file)
+
+# Function to create an SSH client and connect to a device
+def create_ssh_client(hostname, username, password):
+    ssh_client = paramiko.SSHClient()
+    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh_client.connect(hostname=hostname, username=username, password=password)
+        return ssh_client
+    except Exception as e:
+        print(f"An error occurred while connecting to {hostname}: {e}")
+        return None
 
 # Function to execute command on the device and return the output
 def execute_command(ssh_client, command):
     stdin, stdout, stderr = ssh_client.exec_command(command)
     return stdout.read().decode('utf-8').strip()
 
-# Parse the 'show ip int brief' output
-def parse_l3_interfaces(output):
-    interfaces = []
-    for line in output.splitlines():
-        match = l3_interface_regex.search(line)
+# Parse the 'show ip int brief' output for Nexus devices
+def parse_nexus_ip_int_brief(output):
+    pattern = re.compile(r'(\S+)\s+(\d+\.\d+\.\d+\.\d+)\s+\S+\s+\S+\s+(up|down)\s+(up|down)')
+    data = []
+    for line in output.split('\n'):
+        match = pattern.match(line)
         if match:
-            interfaces.append({
+            data.append({
                 'Interface': match.group(1),
                 'IP Address': match.group(2),
                 'Status': match.group(3),
                 'Protocol': match.group(4)
             })
-    return interfaces
+    return data
 
-# Parse the 'show int status' output
-def parse_l2_interfaces(output):
-    interfaces = []
-    for line in output.splitlines():
-        match = l2_interface_regex.search(line)
+# Parse the 'show int status' output for Catalyst devices
+def parse_catalyst_int_status(output):
+    pattern = re.compile(r'(\S+)\s+connected\s+(\d+)\s+.*\s+(\S+)\s+')
+    data = []
+    for line in output.split('\n'):
+        match = pattern.match(line)
         if match:
-            interfaces.append({
+            data.append({
                 'Interface': match.group(1),
                 'VLAN': match.group(2),
-                'Status': 'connected'
+                'Type': match.group(3)
             })
-    return interfaces
-
-# Function to load devices from YAML file
-def load_devices(yaml_file_path):
-    with open(yaml_file_path) as file:
-        return yaml.safe_load(file)
+    return data
 
 # Main function
 def main():
@@ -58,39 +64,29 @@ def main():
 
     all_device_data = []
 
-    for category, devices in devices_by_category.items():
-        for device_ip in devices:
-            print(f"Connecting to {category} device {device_ip}...")
-            ssh_client = paramiko.SSHClient()
-            ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            try:
-                ssh_client.connect(hostname=device_ip, username=username, password=password)
-                if category == "Nexus":
-                    l3_command = 'show ip int brief vrf all'
-                    l3_output = execute_command(ssh_client, l3_command)
-                    l3_data = parse_l3_interfaces(l3_output)
-                    print(f"Debug: L3 data for {device_ip} - {l3_data}")  # Debug print
-                    all_device_data.extend(l3_data)
+    for category, device_list in devices_by_category.items():
+        for hostname in device_list:
+            print(f"Connecting to {category} device: {hostname}...")
 
-                elif category == "Catalyst":
-                    l2_command = 'show int status | include connected'
-                    l2_output = execute_command(ssh_client, l2_command)
-                    l2_data = parse_l2_interfaces(l2_output)
-                    print(f"Debug: L2 data for {device_ip} - {l2_data}")  # Debug print
-                    all_device_data.extend(l2_data)
+            ssh_client = create_ssh_client(hostname, username, password)
+            if ssh_client:
+                try:
+                    if category.lower() == 'nexus':
+                        command = 'show ip int brief vrf all'
+                        output = execute_command(ssh_client, command)
+                        parsed_data = parse_nexus_ip_int_brief(output)
+                        all_device_data.extend(parsed_data)
+                    elif category.lower() == 'catalyst':
+                        command = 'show int status | include connected'
+                        output = execute_command(ssh_client, command)
+                        parsed_data = parse_catalyst_int_status(output)
+                        all_device_data.extend(parsed_data)
+                finally:
+                    ssh_client.close()
 
-            except Exception as e:
-                print(f"Failed to process {device_ip}: {e}")
-            finally:
-                ssh_client.close()
-
-    # Check if we have any data to write to CSV
-    if all_device_data:
-        df = pd.DataFrame(all_device_data)
-        df.to_csv('network_data.csv', index=False)
-        print("Data collection complete. CSV file created.")
-    else:
-        print("No data was collected.")
+    df = pd.DataFrame(all_device_data)
+    df.to_csv('network_data.csv', index=False)
+    print("Data collection complete. CSV file created.")
 
 if __name__ == "__main__":
     main()
