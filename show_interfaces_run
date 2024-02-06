@@ -20,17 +20,14 @@ def execute_command(ssh_client, command):
     stdin, stdout, stderr = ssh_client.exec_command(command)
     return stdout.read().decode('utf-8').strip()
 
-def process_device_group(group_name, devices, all_device_data):
+def process_device_group(group_name, devices, all_device_data, username, password):
     for device in devices:
-        print(f"Processing {group_name} device {device['host']}")
-        username = input(f"Username for {device['host']}: ")
-        password = getpass(f"Password for {device['host']}: ")
-
+        print(f"Processing {group_name} device {device['host']}...")
+        
         ssh_client = paramiko.SSHClient()
         ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
             ssh_client.connect(hostname=device['host'], username=username, password=password)
-            # Example command execution - adjust these commands based on the group
             if group_name == "Nexus":
                 output = execute_command(ssh_client, "show ip int brief vrf all")
                 all_device_data.extend(parse_show_ip_int_brief(output))
@@ -45,10 +42,14 @@ def process_device_group(group_name, devices, all_device_data):
 def main():
     yaml_file_path = 'devices.yaml'
     devices_by_category = load_devices(yaml_file_path)
+    
+    username = input("Enter username for all devices: ")
+    password = getpass("Enter password for all devices: ")
+
     all_device_data = []
 
     for category, devices in devices_by_category.items():
-        process_device_group(category, devices, all_device_data)
+        process_device_group(category, devices, all_device_data, username, password)
 
     df = pd.DataFrame(all_device_data)
     df.to_csv('network_data.csv', index=False)
