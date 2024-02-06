@@ -4,12 +4,12 @@ import yaml
 import paramiko
 from getpass import getpass
 
-# Function to load devices from YAML file
+# Load devices from the YAML file
 def load_devices(yaml_file_path):
     with open(yaml_file_path) as file:
         return yaml.safe_load(file)
 
-# Function to create an SSH client and connect to a device
+# Create an SSH client and connect to a device
 def create_ssh_client(hostname, username, password):
     ssh_client = paramiko.SSHClient()
     ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -20,14 +20,14 @@ def create_ssh_client(hostname, username, password):
         print(f"An error occurred while connecting to {hostname}: {e}")
         return None
 
-# Function to execute command on the device and return the output
+# Execute a command on the device and return the output
 def execute_command(ssh_client, command):
     stdin, stdout, stderr = ssh_client.exec_command(command)
     return stdout.read().decode('utf-8').strip()
 
 # Parse the 'show ip int brief' output for Nexus devices
 def parse_nexus_ip_int_brief(output):
-    pattern = re.compile(r'(\S+)\s+(\d+\.\d+\.\d+\.\d+)\s+\S+\s+\S+\s+(up|down)\s+(up|down)')
+    pattern = re.compile(r'(\S+)\s+(\d+\.\d+\.\d+\.\d+)\s+.*\s+(up|down)\s+(up|down)')
     data = []
     for line in output.split('\n'):
         match = pattern.match(line)
@@ -40,9 +40,9 @@ def parse_nexus_ip_int_brief(output):
             })
     return data
 
-# Parse the 'show int status' output for Catalyst devices
+# Parse the 'show int status | include connected' output for Catalyst devices
 def parse_catalyst_int_status(output):
-    pattern = re.compile(r'(\S+)\s+connected\s+(\d+)\s+.*\s+(\S+)\s+')
+    pattern = re.compile(r'(\S+)\s+connected\s+.*\s+(\d+)\s+.*')
     data = []
     for line in output.split('\n'):
         match = pattern.match(line)
@@ -50,43 +50,26 @@ def parse_catalyst_int_status(output):
             data.append({
                 'Interface': match.group(1),
                 'VLAN': match.group(2),
-                'Type': match.group(3)
+                'Status': 'connected'
             })
     return data
 
-# Main function
+# Main execution function
 def main():
-    yaml_file_path = 'devices.yaml'  # Specify the path to your YAML file
+    yaml_file_path = 'devices.yaml'  # Path to your YAML file
     devices_by_category = load_devices(yaml_file_path)
 
+    # Prompt for credentials
     username = input("Enter username for all devices: ")
     password = getpass("Enter password for all devices: ")
 
     all_device_data = []
 
+    # Iterate over each device category and device within it
     for category, device_list in devices_by_category.items():
-        for hostname in device_list:
-            print(f"Connecting to {category} device: {hostname}...")
+        for device_info in device_list:
+            hostname = device_info['host']
+            print(f"Processing {category} device: {hostname}...")
 
-            ssh_client = create_ssh_client(hostname, username, password)
-            if ssh_client:
-                try:
-                    if category.lower() == 'nexus':
-                        command = 'show ip int brief vrf all'
-                        output = execute_command(ssh_client, command)
-                        parsed_data = parse_nexus_ip_int_brief(output)
-                        all_device_data.extend(parsed_data)
-                    elif category.lower() == 'catalyst':
-                        command = 'show int status | include connected'
-                        output = execute_command(ssh_client, command)
-                        parsed_data = parse_catalyst_int_status(output)
-                        all_device_data.extend(parsed_data)
-                finally:
-                    ssh_client.close()
-
-    df = pd.DataFrame(all_device_data)
-    df.to_csv('network_data.csv', index=False)
-    print("Data collection complete. CSV file created.")
-
-if __name__ == "__main__":
-    main()
+            # Ensure hostname is a string
+            if not isinstance(hostname,**⬤**
