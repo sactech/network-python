@@ -15,6 +15,7 @@ def create_ssh_client(hostname, username, password):
     ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         ssh_client.connect(hostname=hostname, username=username, password=password)
+        print(f"Connected to {hostname}")
         return ssh_client
     except Exception as e:
         print(f"An error occurred while connecting to {hostname}: {e}")
@@ -23,11 +24,15 @@ def create_ssh_client(hostname, username, password):
 # Execute a command on the device and return the output
 def execute_command(ssh_client, command):
     stdin, stdout, stderr = ssh_client.exec_command(command)
-    return stdout.read().decode('utf-8').strip()
+    output = stdout.read().decode('utf-8')
+    error = stderr.read().decode('utf-8')
+    if error:
+        print(f"Error while executing command '{command}': {error}")
+    return output.strip()
 
 # Parse the 'show int status | include connected' output for Catalyst devices
 def parse_catalyst_int_status(output):
-    pattern = re.compile(r'(\S+)\s+connected\s+.*')
+    pattern = re.compile(r'(\S+)\s+connected\s+')
     interfaces = []
     for line in output.splitlines():
         match = pattern.match(line)
@@ -39,39 +44,15 @@ def parse_catalyst_int_status(output):
 def get_interface_configuration(ssh_client, interface):
     command = f'show run interface {interface}'
     output = execute_command(ssh_client, command)
+    print(f"Running config for {interface}:")  # Debug print
+    print(output)  # Debug print
     return parse_interface_config(output)
 
-# Parse the 'show run interface' output for an interface
+# Function to parse 'show run interface' output for an interface
 def parse_interface_config(output):
-    config = {
-        'Interface': '',
-        'Description': '',
-        'IP Address': '',
-        'VRF': '',
-        'Switchport Mode': '',
-        'Switchport Access VLAN': '',
-        'Switchport Trunk Allowed VLAN': '',
-        'Switchport Trunk Native VLAN': '',
-    }
-    for line in output.splitlines():
-        line = line.strip()
-        if line.startswith('interface'):
-            config['Interface'] = line.split()[-1]
-        elif line.startswith('description'):
-            config['Description'] = line.split(' ', 1)[1]
-        elif line.startswith('ip address'):
-            config['IP Address'] = line.split()[2]
-        elif line.startswith('vrf member'):
-            config['VRF'] = line.split()[-1]
-        elif line.startswith('switchport mode'):
-            config['Switchport Mode'] = line.split()[-1]
-        elif line.startswith('switchport access vlan'):
-            config['Switchport Access VLAN'] = line.split()[-1]
-        elif line.startswith('switchport trunk allowed vlan'):
-            config['Switchport Trunk Allowed VLAN'] = line.split()[-1]
-        elif line.startswith('switchport trunk native vlan'):
-            config['Switchport Trunk Native VLAN'] = line.split()[-1]
-    return config
+    # Here you would implement the logic to parse the configuration details as needed
+    # ...
+    return {}
 
 # Main execution function
 def main():
@@ -95,10 +76,7 @@ def main():
             if ssh_client:
                 try:
                     # Execute and parse commands based on device category
-                    if category.lower() == 'nexus':
-                        # Your Nexus-specific logic will go here
-                        pass
-                    elif category.lower() == 'catalyst':
+                    if category.lower() == 'catalyst':
                         interfaces = parse_catalyst_int_status(
                             execute_command(ssh_client, 'show int status | include connected'))
                         for interface in interfaces:
@@ -110,9 +88,12 @@ def main():
                     ssh_client.close()
 
     # Convert the aggregated data to a DataFrame and output to a CSV file
-    df = pd.DataFrame(all_device_data)
-    df.to_csv('network_data.csv', index=False)
-    print("Data collection complete. CSV file created.")
+    if all_device_data:
+        df = pd.DataFrame(all_device_data)
+        df.to_csv('network_data.csv', index=False)
+        print("Data collection complete. CSV file created.")
+    else:
+        print("No data was collected to write to CSV.")
 
 if __name__ == "__main__":
     main()
