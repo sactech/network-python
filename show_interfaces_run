@@ -24,11 +24,7 @@ def create_ssh_client(hostname, username, password):
 # Execute a command on the device and return the output
 def execute_command(ssh_client, command):
     stdin, stdout, stderr = ssh_client.exec_command(command)
-    output = stdout.read().decode('utf-8')
-    error = stderr.read().decode('utf-8')
-    if error:
-        print(f"Error while executing command '{command}': {error}")
-    return output.strip()
+    return stdout.read().decode('utf-8').strip()
 
 # Parse the 'show int status | include connected' output for Catalyst devices
 def parse_catalyst_int_status(output):
@@ -40,19 +36,52 @@ def parse_catalyst_int_status(output):
             interfaces.append(match.group(1))
     return interfaces
 
-# Get interface configuration
-def get_interface_configuration(ssh_client, interface):
-    command = f'show run interface {interface}'
-    output = execute_command(ssh_client, command)
-    print(f"Running config for {interface}:")  # Debug print
-    print(output)  # Debug print
-    return parse_interface_config(output)
+# Parsing for an Ethernet interface
+def parse_ethernet_interface(output):
+    details = {
+        'Interface': '',
+        'Description': '',
+        'Switchport Mode': '',
+        'Fex Associate': '',
+        'Channel-Group': '',
+    }
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith('interface Ethernet'):
+            details['Interface'] = line.split()[-1]
+        elif line.startswith('description'):
+            details['Description'] = line.split(' ', 1)[1]
+        elif line.startswith('switchport mode'):
+            details['Switchport Mode'] = line.split()[-1]
+        elif line.startswith('fex associate'):
+            details['Fex Associate'] = line.split()[-1]
+        elif line.startswith('channel-group'):
+            details['Channel-Group'] = line.split()[-1]
 
-# Function to parse 'show run interface' output for an interface
-def parse_interface_config(output):
-    # Here you would implement the logic to parse the configuration details as needed
-    # ...
-    return {}
+    return details
+
+# Parsing for a Vlan interface
+def parse_vlan_interface(output):
+    details = {
+        'Interface': '',
+        'VRF': '',
+        'IP Address': '',
+        'Tag': ''
+    }
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith('interface Vlan'):
+            details['Interface'] = line.split()[-1]
+        elif line.startswith('vrf member'):
+            details['VRF'] = line.split()[-1]
+        elif line.startswith('ip address'):
+            ip_info = line.split()
+            details['IP Address'] = ip_info[2]
+            # Extracting the tag if present
+            if 'tag' in line:
+                details['Tag'] = ip_info[-1]
+
+    return details
 
 # Main execution function
 def main():
@@ -69,25 +98,27 @@ def main():
     for category, devices in devices_by_category.items():
         for device in devices:
             hostname = device['host']
-            print(f"Processing {category} device: {hostname}...")
-
-            # Connect to the device
             ssh_client = create_ssh_client(hostname, username, password)
             if ssh_client:
                 try:
-                    # Execute and parse commands based on device category
-                    if category.lower() == 'catalyst':
+                    if category.lower() == 'nexus':
                         interfaces = parse_catalyst_int_status(
                             execute_command(ssh_client, 'show int status | include connected'))
                         for interface in interfaces:
-                            config = get_interface_configuration(ssh_client, interface)
-                            all_device_data.append(config)
+                            if interface.startswith('Eth'):
+                                eth_output = execute_command(ssh_client, f'sho run int {interface}')
+                                eth_config = parse_ethernet_interface(eth_output)
+                                all_device_data.append(eth_config)
+                            elif interface.startswith('Vlan'):
+                                vlan_output = execute_command(ssh_client, f'sho run int {interface}')
+                                vlan_config = parse_vlan_interface(vlan_output)
+                                all_device_data.append(vlan_config)
                 except Exception as e:
                     print(f"An error occurred while processing {hostname}: {e}")
                 finally:
                     ssh_client.close()
 
-    # Convert the aggregated data to a DataFrame and output to a CSV file
+    # Write the data to a CSV file
     if all_device_data:
         df = pd.DataFrame(all_device_data)
         df.to_csv('network_data.csv', index=False)
