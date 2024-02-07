@@ -4,12 +4,12 @@ import yaml
 import paramiko
 from getpass import getpass
 
-# Function to load devices from YAML file
+# Load devices from the YAML file
 def load_devices(yaml_file_path):
     with open(yaml_file_path) as file:
         return yaml.safe_load(file)
 
-# Function to create an SSH client and connect to a device
+# Create an SSH client and connect to a device
 def create_ssh_client(hostname, username, password):
     ssh_client = paramiko.SSHClient()
     ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -20,32 +20,62 @@ def create_ssh_client(hostname, username, password):
         print(f"An error occurred while connecting to {hostname}: {e}")
         return None
 
-# Function to execute a command on the device and return the output
+# Execute a command on the device and return the output
 def execute_command(ssh_client, command):
     stdin, stdout, stderr = ssh_client.exec_command(command)
-    output = stdout.read().decode('utf-8')
-    error = stderr.read().decode('utf-8')
-    if error:
-        print(f"Error while executing command '{command}': {error}")
-    return output.strip()
+    return stdout.read().decode('utf-8').strip()
 
-# Function to parse 'show ip int brief' output for Nexus devices
-def parse_nexus_ip_int_brief(output):
-    print("Raw output from Nexus device:")
-    print(output)  # Debug print
-    # Include your parsing logic here based on the output format
-    return []
-
-# Function to parse 'show int status | include connected' output for Catalyst devices
+# Parse the 'show int status | include connected' output for Catalyst devices
 def parse_catalyst_int_status(output):
-    print("Raw output from Catalyst device:")
-    print(output)  # Debug print
-    # Include your parsing logic here based on the output format
-    return []
+    pattern = re.compile(r'(\S+)\s+connected\s+.*')
+    interfaces = []
+    for line in output.splitlines():
+        match = pattern.match(line)
+        if match:
+            interfaces.append(match.group(1))
+    return interfaces
+
+# Get interface configuration
+def get_interface_configuration(ssh_client, interface):
+    command = f'show run interface {interface}'
+    output = execute_command(ssh_client, command)
+    return parse_interface_config(output)
+
+# Parse the 'show run interface' output for an interface
+def parse_interface_config(output):
+    config = {
+        'Interface': '',
+        'Description': '',
+        'IP Address': '',
+        'VRF': '',
+        'Switchport Mode': '',
+        'Switchport Access VLAN': '',
+        'Switchport Trunk Allowed VLAN': '',
+        'Switchport Trunk Native VLAN': '',
+    }
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith('interface'):
+            config['Interface'] = line.split()[-1]
+        elif line.startswith('description'):
+            config['Description'] = line.split(' ', 1)[1]
+        elif line.startswith('ip address'):
+            config['IP Address'] = line.split()[2]
+        elif line.startswith('vrf member'):
+            config['VRF'] = line.split()[-1]
+        elif line.startswith('switchport mode'):
+            config['Switchport Mode'] = line.split()[-1]
+        elif line.startswith('switchport access vlan'):
+            config['Switchport Access VLAN'] = line.split()[-1]
+        elif line.startswith('switchport trunk allowed vlan'):
+            config['Switchport Trunk Allowed VLAN'] = line.split()[-1]
+        elif line.startswith('switchport trunk native vlan'):
+            config['Switchport Trunk Native VLAN'] = line.split()[-1]
+    return config
 
 # Main execution function
 def main():
-    yaml_file_path = 'devices.yaml'  # Path to your YAML file
+    yaml_file_path = 'devices.yaml'  # Specify the path to your YAML file
     devices_by_category = load_devices(yaml_file_path)
 
     # Prompt for credentials
@@ -55,8 +85,8 @@ def main():
     all_device_data = []
 
     # Iterate over each device category and device within it
-    for category, device_list in devices_by_category.items():
-        for device in device_list:
+    for category, devices in devices_by_category.items():
+        for device in devices:
             hostname = device['host']
             print(f"Processing {category} device: {hostname}...")
 
@@ -66,15 +96,14 @@ def main():
                 try:
                     # Execute and parse commands based on device category
                     if category.lower() == 'nexus':
-                        command = 'show ip int brief vrf all'
-                        output = execute_command(ssh_client, command)
-                        parsed_data = parse_nexus_ip_int_brief(output)
-                        all_device_data.extend(parsed_data)
+                        # Your Nexus-specific logic will go here
+                        pass
                     elif category.lower() == 'catalyst':
-                        command = 'show int status | include connected'
-                        output = execute_command(ssh_client, command)
-                        parsed_data = parse_catalyst_int_status(output)
-                        all_device_data.extend(parsed_data)
+                        interfaces = parse_catalyst_int_status(
+                            execute_command(ssh_client, 'show int status | include connected'))
+                        for interface in interfaces:
+                            config = get_interface_configuration(ssh_client, interface)
+                            all_device_data.append(config)
                 except Exception as e:
                     print(f"An error occurred while processing {hostname}: {e}")
                 finally:
