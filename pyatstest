@@ -1,0 +1,75 @@
+import pandas as pd
+import yaml
+from genie import connections, utils
+
+# Load devices from YAML file
+def load_devices(yaml_file_path):
+    with open(yaml_file_path) as file:
+        return yaml.safe_load(file)
+
+# Establish connection to a network device
+def connect_device(device):
+    username = input("Enter username: ")
+    password = getpass("Enter password: ")
+    return connections.create_session(device, username=username, password=password)
+
+# Retrieve interface details for Cisco devices
+def get_interface_data(conn, interface_name):
+    try:
+        intf = conn.interface[interface_name]
+        details = {
+            "Interface": intf.name,
+            "Description": intf.description,
+            "Switchport Mode": intf.switchport.mode if intf.switchport else "N/A",
+            "IP Address": "N/A" if intf.ipv4_address is None else intf.ipv4_address.ip,
+            "VRF": intf.vrf.name if intf.vrf else "N/A",
+            "Tag": intf.switchport.trunk.native_vlan if intf.switchport.trunk else "N/A",
+        }
+        return details
+    except Exception as e:
+        print(f"Error getting details for {interface_name}: {e}")
+        return None
+
+# Main execution function
+def main():
+    yaml_file_path = "devices.yaml"
+    devices_by_category = load_devices(yaml_file_path)
+
+    all_device_data = []
+
+    # Iterate through device categories and devices
+    for category, devices in devices_by_category.items():
+        for device in devices:
+            hostname = device["host"]
+
+            try:
+                # Connect to device using Genie
+                conn = connect_device(device)
+
+                # Use Genie's "show command" capability
+                output = conn.cli.execute("show running-config interface | include connected")
+                interfaces = re.findall(r"(\S+)\s+connected", output)
+
+                # Retrieve details for each UP interface
+                for interface in interfaces:
+                    data = get_interface_data(conn, interface)
+                    if data:
+                        all_device_data.append(data)
+
+            except Exception as e:
+                print(f"Error processing device {hostname}: {e}")
+
+            finally:
+                # Close connection to device
+                conn.close()
+
+    # Convert data to pandas DataFrame and write to CSV
+    if all_device_data:
+        df = pd.DataFrame(all_device_data)
+        df.to_csv("network_data.csv", index=False)
+        print("Data collection complete. CSV file created.")
+    else:
+        print("No data collected to write to CSV.")
+
+if __name__ == "__main__":
+    main()
