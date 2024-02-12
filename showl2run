@@ -1,0 +1,57 @@
+import paramiko
+import pandas as pd
+import yaml
+from getpass import getpass
+
+def load_devices(yaml_file_path):
+    with open(yaml_file_path) as file:
+        return yaml.safe_load(file)
+
+def create_ssh_client(hostname, username, password):
+    ssh_client = paramiko.SSHClient()
+    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh_client.connect(hostname=hostname, username=username, password=password)
+        return ssh_client
+    except Exception as e:
+        print(f"An error occurred while connecting to {hostname}: {e}")
+        return None
+
+def execute_command(ssh_client, command):
+    stdin, stdout, stderr = ssh_client.exec_command(command)
+    return stdout.read().decode('utf-8').strip()
+
+def get_ethernet_interfaces(ssh_client):
+    command = "show interface status"
+    output = execute_command(ssh_client, command)
+    eth_interfaces = re.findall(r'Eth\d+/\d+/\d+|\d+/\d+/\d+', output)  # Adjust regex as needed
+    return eth_interfaces
+
+def main():
+    yaml_file_path = 'devices.yaml'
+    devices = load_devices(yaml_file_path)
+
+    username = input("Enter username for all devices: ")
+    password = getpass("Enter password for all devices: ")
+
+    eth_data = []
+
+    for device in devices:
+        hostname = device['host']
+        ssh_client = create_ssh_client(hostname, username, password)
+        if ssh_client:
+            ethernet_interfaces = get_ethernet_interfaces(ssh_client)
+            for eth in ethernet_interfaces:
+                config_output = execute_command(ssh_client, f'show run interface {eth}')
+                eth_data.append({'Interface': eth, 'Configuration': config_output})
+            ssh_client.close()
+
+    if eth_data:
+        df = pd.DataFrame(eth_data)
+        df.to_csv('ethernet_interfaces_config.csv', index=False)
+        print("Ethernet interfaces configuration saved to ethernet_interfaces_config.csv.")
+    else:
+        print("No Ethernet interfaces data collected.")
+
+if __name__ == "__main__":
+    main()
