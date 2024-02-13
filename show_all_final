@@ -1,0 +1,82 @@
+import paramiko
+import pandas as pd
+import getpass
+import yaml
+
+# Updated function to convert abbreviated interface names to full names for matching
+def interface_matches(full_name, abbr_name):
+    abbr_to_full = {
+        'Gi': 'GigabitEthernet',
+        'Vl': 'Vlan',
+        'Te': 'TenGigabitEthernet',  # Added handling for TenGigabitEthernet
+    }
+    for abbr, full in abbr_to_full.items():
+        if abbr_name.startswith(abbr):
+            abbr_name = abbr_name.replace(abbr, full)
+            break
+    return full_name == abbr_name
+
+# Function to parse the command outputs and update the data list
+def parse_output(device, command, output, data):
+    lines = output.strip().split('\n')[1:]  # Skip the header line
+    if command == 'show ip interface brief':
+        for line in lines:
+            parts = line.split()
+            interface_full = parts[0]
+            ip_address = parts[1] if parts[1] != 'unassigned' else ''
+            status = parts[4]
+            protocol = parts[5]
+            data.append([device, interface_full, ip_address, status, protocol, '', '', '', '', ''])
+
+    elif command == 'show interface description':
+        for line in lines:
+            parts = line.split(maxsplit=3)  # Split line into parts, but keep description intact
+            if len(parts) < 4: continue
+            interface_abbr, status, protocol, description = parts
+            for row in data:
+                if interface_matches(row[1], interface_abbr):
+                    row[5] = description  # Update description for the matching interface
+
+    elif command == 'show interface status':
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 6: continue
+            interface_abbr, vlan, duplex, speed, type_ = parts[0], parts[3], parts[4], parts[5], ' '.join(parts[6:])
+            for row in data:
+                if interface_matches(row[1], interface_abbr):
+                    row[6], row[7], row[8], row[9] = vlan, duplex, speed, type_  # Update VLAN, Duplex, Speed, Type
+
+# Prompt for credentials
+username = input("Enter your SSH username: ")
+password = getpass.getpass("Enter your SSH password: ")
+
+# Load devices from YAML
+with open("devices.yaml", 'r') as file:
+    devices = yaml.safe_load(file)['devices']
+
+# List to hold all device data
+all_data = []
+
+# Main execution loop
+for device in devices:
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(device['host'], username=username, password=password)
+
+    device_data = []
+    for command in ['show ip interface brief', 'show interface description', 'show interface status']:
+        stdin, stdout, stderr = client.exec_command(command)
+        output = stdout.read().decode('utf-8')
+        parse_output(device['host'], command, output, device_data)
+
+    client.close()
+    all_data.extend(device_data)
+
+# Convert the list of data into a pandas DataFrame
+columns = ['Device', 'Interface', 'IP-Address', 'Status', 'Protocol', 'Description', 'VLAN', 'Duplex', 'Speed', 'Type']
+df = pd.DataFrame(all_data, columns=columns)
+
+# Write the DataFrame to an Excel file
+df.to_excel('network_device_data.xlsx', index=False)
+
+print("Excel file created successfully.")
