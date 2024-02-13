@@ -3,12 +3,12 @@ import pandas as pd
 import getpass
 import yaml
 
+# Function to convert abbreviated interface names to full names for matching
 def interface_matches(full_name, abbr_name):
     abbr_to_full = {
         'Gi': 'GigabitEthernet',
         'Vl': 'Vlan',
-        'Te': 'TenGigabitEthernet',  # Handle TenGigabitEthernet abbreviated as Te
-        'Eth': 'Ethernet',  # Assuming Eth could be a prefix in some Nexus models
+        'Te': 'TenGigabitEthernet',
     }
     for abbr, full in abbr_to_full.items():
         if abbr_name.startswith(abbr):
@@ -16,25 +16,18 @@ def interface_matches(full_name, abbr_name):
             break
     return full_name == abbr_name
 
+# Function to parse the command outputs and update the data list
 def parse_output(device, command, output, data):
     lines = output.strip().split('\n')[1:]
     for line in lines:
         parts = line.split()
+        # Add your parsing logic here based on the output format
+        # Example for 'show ip interface brief':
         if command == 'show ip interface brief' and len(parts) >= 6:
-            data.append([device, parts[0], parts[1], parts[4], parts[5], '', '', '', '', ''])
-        elif command == 'show interface description' and len(parts) >= 4:
-            description = ' '.join(parts[3:])
-            for row in data:
-                if interface_matches(row[1], parts[0]):
-                    row[5] = description
-        elif command == 'show interface status' and len(parts) >= 9:
-            for row in data:
-                if interface_matches(row[1], parts[0]):
-                    row[6], row[7], row[8], row[9] = parts[3], parts[4], parts[5], ' '.join(parts[6:])
+            # Update your data structure here based on the parsed information
+            pass
 
-username = input("Enter your SSH username: ")
-password = getpass.getpass("Enter your SSH password: ")
-
+# Function to load devices from a YAML file
 def load_devices(file_path="devices.yaml"):
     with open(file_path, 'r') as file:
         content = yaml.safe_load(file)
@@ -43,25 +36,46 @@ def load_devices(file_path="devices.yaml"):
         devices.extend(category['devices'])
     return devices
 
-all_data = []
+# Function to handle SSH connections with error checking
+def ssh_connect(hostname, username, password):
+    ssh_client = paramiko.SSHClient()
+    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # Automatically accept the host key
+    try:
+        ssh_client.connect(hostname, username=username, password=password)
+    except paramiko.AuthenticationException:
+        print(f"Authentication failed for host {hostname}.")
+        return None
+    except paramiko.SSHException as e:
+        print(f"SSH connection failed for host {hostname}: {e}")
+        return None
+    return ssh_client
 
-for device in load_devices():
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(device['host'], username=username, password=password)
+# Main script
+if __name__ == "__main__":
+    username = input("Enter your SSH username: ")
+    password = getpass.getpass("Enter your SSH password: ")
 
-    device_data = []
-    for command in ['show ip interface brief', 'show interface description', 'show interface status']:
-        stdin, stdout, stderr = client.exec_command(command)
-        output = stdout.read().decode('utf-8')
-        parse_output(device['host'], command, output, device_data)
+    all_data = []
 
-    client.close()
-    all_data.extend(device_data)
+    for device in load_devices():
+        client = ssh_connect(device['host'], username, password)
+        if client is None:
+            continue  # Skip this device and move to the next one
 
-columns = ['Device', 'Interface', 'IP-Address', 'Status', 'Protocol', 'Description', 'VLAN', 'Duplex', 'Speed', 'Type']
-df = pd.DataFrame(all_data, columns=columns)
+        device_data = []
+        for command in ['show ip interface brief', 'show interface description', 'show interface status']:
+            stdin, stdout, stderr = client.exec_command(command)
+            output = stdout.read().decode('utf-8')
+            parse_output(device['host'], command, output, device_data)
 
-df.to_excel('network_device_data.xlsx', index=False)
+        client.close()
+        all_data.extend(device_data)
 
-print("Excel file created successfully.")
+    # Assuming data is a list of lists, each inner list being a row of data
+    columns = ['Device', 'Interface', 'IP-Address', 'Status', 'Protocol', 'Description', 'VLAN', 'Duplex', 'Speed', 'Type']
+    df = pd.DataFrame(all_data, columns=columns)
+
+    # Write the DataFrame to an Excel file
+    df.to_excel('network_device_data.xlsx', index=False)
+
+    print("Excel file created successfully.")
