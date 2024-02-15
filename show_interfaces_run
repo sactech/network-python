@@ -2,7 +2,7 @@ import paramiko
 import pandas as pd
 import getpass
 import yaml
-from paramiko.ssh_exception import NoValidConnectionsError, SSHException, AuthenticationException, EOFError
+from paramiko.ssh_exception import NoValidConnectionsError, SSHException, AuthenticationException
 
 # Define a custom exception for when a device is not reachable.
 class DeviceNotReachableException(Exception):
@@ -24,8 +24,53 @@ def interface_matches(full_name, abbr_name):
 
 # Function to parse the command outputs and update the data list
 def parse_output(device, command, output, data):
-    # Implement parsing logic here based on the output format
-    pass
+    lines = output.strip().split('\n')[1:]  # Skip the header line
+    for line in lines:
+        parts = line.split()
+        interface = parts[0]
+        if command == 'show ip interface brief':
+            # Map full interface name for 'show ip interface brief' output
+            full_interface = interface
+            ip_address = parts[1]
+            ok_method = parts[2] == 'YES'
+            status = parts[4]
+            protocol = parts[5]
+            data[full_interface] = {
+                'Device': device,
+                'IP-Address': ip_address,
+                'OK?': ok_method,
+                'Status': status,
+                'Protocol': protocol,
+                'Description': '',
+                'Vlan': '',
+                'Duplex': '',
+                'Speed': '',
+                'Type': ''
+            }
+        elif command == 'show interface description':
+            # Match abbreviated interface name with full name
+            for full_interface in data:
+                if interface_matches(full_interface, interface):
+                    description = ' '.join(parts[3:])
+                    data[full_interface]['Description'] = description
+                    break
+        elif command == 'show interface status':
+            # Match abbreviated interface name with full name
+            for full_interface in data:
+                if interface_matches(full_interface, interface):
+                    status = parts[2]
+                    vlan = parts[3]
+                    duplex = parts[4]
+                    speed = parts[5]
+                    type = ' '.join(parts[6:])
+                    data[full_interface].update({
+                        'Status': status,
+                        'Vlan': vlan,
+                        'Duplex': duplex,
+                        'Speed': speed,
+                        'Type': type
+                    })
+                    break
 
 # Function to load devices from a YAML file
 def load_devices(file_path="devices.yaml"):
@@ -58,36 +103,37 @@ if __name__ == "__main__":
     username = input("Enter your SSH username: ")
     password = getpass.getpass("Enter your SSH password: ")
 
-    all_data = []
     devices = load_devices()
+    all_data = []
 
     for device in devices:
         try:
             client = ssh_connect(device['host'], username, password)
-        except DeviceNotReachableException:
-            continue
-        except AuthenticationException:
-            continue
-        except SSHException:
-            continue
-
-        device_data = {'Device': device['host']}
-        for command in ['show ip interface brief', 'show interface description', 'show interface status']:
-            try:
+            device_data = {}
+            for command in ['show ip interface brief', 'show interface description', 'show interface status']:
                 stdin, stdout, stderr = client.exec_command(command)
                 output = stdout.read().decode('utf-8')
                 parse_output(device['host'], command, output, device_data)
-            except EOFError as e:
-                print(f"EOFError encountered while running '{command}' on {device['host']}: {e}")
-            except SSHException as e:
-                print(f"SSHException encountered while running '{command}' on {device['host']}: {e}")
-                break
+            all_data.append(device_data)
+            client.close()
+        except DeviceNotReachableException:
+            continue  # Skip this device and move to the next one
+        except (AuthenticationException, SSHException):
+            continue  # Skip this device and move to the next one
 
-        client.close()
-        all_data.append(device_data)
+    # Convert all_data to DataFrame
+    df_rows = []
+    for device_info in all_data:
+        for interface, details in device_info.items():
+            row = {'Device': details['Device'], 'Interface': interface}
+            row.update(details)
+            df_rows.append(row)
 
-    # Assuming device_data is a dictionary with keys corresponding to column names
-    df = pd.DataFrame(all_data)
+    # Assuming the parsing fills device_data with correct info
+    df = pd.DataFrame(df_rows)
+
+    # Specify the columns order if needed
+    df = df[['Device', 'Interface', 'IP-Address', 'OK?', 'Status', 'Protocol', 'Description', 'Vlan', 'Duplex', 'Speed', 'Type']]
 
     # Write the DataFrame to an Excel file
     df.to_excel('network_device_data.xlsx', index=False)
