@@ -2,6 +2,11 @@ import paramiko
 import pandas as pd
 import getpass
 import yaml
+from paramiko.ssh_exception import NoValidConnectionsError, SSHException, AuthenticationException
+
+# Define a custom exception for when a device is not reachable.
+class DeviceNotReachableException(Exception):
+    pass
 
 # Function to convert abbreviated interface names to full names for matching
 def interface_matches(full_name, abbr_name):
@@ -39,15 +44,20 @@ def load_devices(file_path="devices.yaml"):
 # Function to handle SSH connections with error checking
 def ssh_connect(hostname, username, password):
     ssh_client = paramiko.SSHClient()
-    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # Automatically accept the host key
+    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
+        print(f"Connecting to device: {hostname}")
         ssh_client.connect(hostname, username=username, password=password)
-    except paramiko.AuthenticationException:
-        print(f"Authentication failed for host {hostname}.")
-        return None
-    except paramiko.SSHException as e:
-        print(f"SSH connection failed for host {hostname}: {e}")
-        return None
+        print(f"Successfully connected to {hostname}")
+    except NoValidConnectionsError as e:
+        print(f"Device {hostname} not reachable. Error: {e}")
+        raise DeviceNotReachableException(f"Device {hostname} not reachable")
+    except AuthenticationException as e:
+        print(f"Authentication failed for device {hostname}. Error: {e}")
+        raise
+    except SSHException as e:
+        print(f"SSH connection failed for device {hostname}. Error: {e}")
+        raise
     return ssh_client
 
 # Main script
@@ -56,22 +66,31 @@ if __name__ == "__main__":
     password = getpass.getpass("Enter your SSH password: ")
 
     all_data = []
+    devices = load_devices()
 
-    for device in load_devices():
-        client = ssh_connect(device['host'], username, password)
-        if client is None:
+    for device in devices:
+        try:
+            client = ssh_connect(device['host'], username, password)
+        except DeviceNotReachableException:
+            continue  # Skip this device and move to the next one
+        except AuthenticationException:
+            continue  # Skip this device and move to the next one
+        except SSHException:
             continue  # Skip this device and move to the next one
 
         device_data = []
         for command in ['show ip interface brief', 'show interface description', 'show interface status']:
-            stdin, stdout, stderr = client.exec_command(command)
-            output = stdout.read().decode('utf-8')
-            parse_output(device['host'], command, output, device_data)
+            try:
+                print(f"Running command '{command}' on {device['host']}")
+                stdin, stdout, stderr = client.exec_command(command)
+                output = stdout.read().decode('utf-8')
+                parse_output(device['host'], command, output, device_data)
+            except EOFError as e:
+                print(f"EOFError encountered while running '{command}' on {device['host']}")
 
         client.close()
         all_data.extend(device_data)
 
-    # Assuming data is a list of lists, each inner list being a row of data
     columns = ['Device', 'Interface', 'IP-Address', 'Status', 'Protocol', 'Description', 'VLAN', 'Duplex', 'Speed', 'Type']
     df = pd.DataFrame(all_data, columns=columns)
 
