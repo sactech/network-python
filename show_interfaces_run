@@ -27,18 +27,19 @@ def parse_output(device, command, output, data):
     lines = output.strip().split('\n')[1:]  # Skip the header line
     for line in lines:
         parts = line.split()
+        # Verify we have enough parts to avoid IndexError
+        if len(parts) < 6:
+            print(f"Warning: Skipping line due to unexpected format: {line}")
+            continue
         interface = parts[0]
         if command == 'show ip interface brief':
-            # Map full interface name for 'show ip interface brief' output
-            full_interface = interface
-            ip_address = parts[1]
-            ok_method = parts[2] == 'YES'
+            ip_address = parts[1] if parts[1] != 'unassigned' else ''
             status = parts[4]
             protocol = parts[5]
-            data[full_interface] = {
+            data[interface] = {
                 'Device': device,
                 'IP-Address': ip_address,
-                'OK?': ok_method,
+                'OK?': parts[2],
                 'Status': status,
                 'Protocol': protocol,
                 'Description': '',
@@ -48,27 +49,21 @@ def parse_output(device, command, output, data):
                 'Type': ''
             }
         elif command == 'show interface description':
-            # Match abbreviated interface name with full name
-            for full_interface in data:
-                if interface_matches(full_interface, interface):
-                    description = ' '.join(parts[3:])
-                    data[full_interface]['Description'] = description
-                    break
+            # Assuming 'parts[3]' exists or using a check similar to above
+            description = ' '.join(parts[3:])
+            if interface in data:
+                data[interface]['Description'] = description
         elif command == 'show interface status':
-            # Match abbreviated interface name with full name
-            for full_interface in data:
-                if interface_matches(full_interface, interface):
-                    status = parts[2]
-                    vlan = parts[3]
-                    duplex = parts[4]
-                    speed = parts[5]
-                    type = ' '.join(parts[6:])
-                    data[full_interface].update({
-                        'Status': status,
-                        'Vlan': vlan,
-                        'Duplex': duplex,
-                        'Speed': speed,
-                        'Type': type
+            # Assuming 'parts[6]' exists or using a check similar to above
+            vlan = parts[3]
+            duplex = parts[4]
+            speed = parts[5]
+            type = ' '.join(parts[6:])
+            if interface in data:
+                data[interface]['Vlan'] = vlan
+                data[interface]['Duplex'] = duplex
+                data[interface]['Speed'] = speed
+                data[interface]['Type'] = type
                     })
                     break
 
