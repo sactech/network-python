@@ -2,7 +2,7 @@ import paramiko
 import pandas as pd
 import getpass
 import yaml
-from paramiko.ssh_exception import NoValidConnectionsError, SSHException, AuthenticationException
+from paramiko.ssh_exception import NoValidConnectionsError, SSHException, AuthenticationException, EOFError
 
 # Define a custom exception for when a device is not reachable.
 class DeviceNotReachableException(Exception):
@@ -66,6 +66,7 @@ def parse_output(device, command, output, data):
 def load_devices(file_path="devices.yaml"):
     with open(file_path, 'r') as file:
         content = yaml.safe_load(file)
+    # Accessing the 'devices' list inside the 'Catalysts' dictionary
     devices = content['Catalysts']['devices']
     return devices
 
@@ -99,9 +100,15 @@ if __name__ == "__main__":
         try:
             client = ssh_connect(device['host'], username, password)
             for command in ['show ip interface brief', 'show interface description', 'show interface status']:
-                stdin, stdout, stderr = client.exec_command(command)
-                output = stdout.read().decode('utf-8')
-                parse_output(device['host'], command, output, device_data)
+                try:
+                    stdin, stdout, stderr = client.exec_command(command)
+                    output = stdout.read().decode('utf-8')
+                    parse_output(device['host'], command, output, device_data)
+                except EOFError as e:
+                    print(f"EOFError encountered while running '{command}' on {device['host']} - {e}")
+                except SSHException as e:
+                    print(f"SSHException encountered while running '{command}' on {device['host']} - {e}")
+                    break  # Break out of the command loop and proceed to the next device
             client.close()
         except DeviceNotReachableException:
             print(f"Skipping device {device['host']} as it's not reachable.")
