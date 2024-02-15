@@ -48,12 +48,10 @@ def parse_output(device, command, output, data):
                 'Type': ''
             }
         elif command == 'show interface description':
-            # Assuming 'parts[3]' exists or using a check similar to above
             description = ' '.join(parts[3:])
             if interface in data:
                 data[interface]['Description'] = description
         elif command == 'show interface status':
-            # Assuming 'parts[6]' exists or using a check similar to above
             vlan = parts[3]
             duplex = parts[4]
             speed = parts[5]
@@ -68,9 +66,7 @@ def parse_output(device, command, output, data):
 def load_devices(file_path="devices.yaml"):
     with open(file_path, 'r') as file:
         content = yaml.safe_load(file)
-    devices = []
-    for category in content.values():
-        devices.extend(category['devices'])
+    devices = content['Catalysts']['devices']
     return devices
 
 # Function to handle SSH connections with error checking
