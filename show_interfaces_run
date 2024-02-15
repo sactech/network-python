@@ -27,8 +27,7 @@ def parse_output(device, command, output, data):
     lines = output.strip().split('\n')[1:]  # Skip the header line
     for line in lines:
         parts = line.split()
-        # Verify we have enough parts to avoid IndexError
-        if len(parts) < 6:
+        if len(parts) < 6:  # Check if the parts list is shorter than expected
             print(f"Warning: Skipping line due to unexpected format: {line}")
             continue
         interface = parts[0]
@@ -64,8 +63,6 @@ def parse_output(device, command, output, data):
                 data[interface]['Duplex'] = duplex
                 data[interface]['Speed'] = speed
                 data[interface]['Type'] = type
-                    })
-                    break
 
 # Function to load devices from a YAML file
 def load_devices(file_path="devices.yaml"):
@@ -99,38 +96,33 @@ if __name__ == "__main__":
     password = getpass.getpass("Enter your SSH password: ")
 
     devices = load_devices()
-    all_data = []
+    all_data = {}
 
     for device in devices:
+        device_data = {}
         try:
             client = ssh_connect(device['host'], username, password)
-            device_data = {}
             for command in ['show ip interface brief', 'show interface description', 'show interface status']:
                 stdin, stdout, stderr = client.exec_command(command)
                 output = stdout.read().decode('utf-8')
                 parse_output(device['host'], command, output, device_data)
-            all_data.append(device_data)
             client.close()
         except DeviceNotReachableException:
-            continue  # Skip this device and move to the next one
+            print(f"Skipping device {device['host']} as it's not reachable.")
+            continue
         except (AuthenticationException, SSHException):
-            continue  # Skip this device and move to the next one
+            print(f"Skipping device {device['host']} due to authentication or SSH error.")
+            continue
+        all_data[device['host']] = device_data
 
     # Convert all_data to DataFrame
     df_rows = []
-    for device_info in all_data:
-        for interface, details in device_info.items():
-            row = {'Device': details['Device'], 'Interface': interface}
-            row.update(details)
-            df_rows.append(row)
+    for host, interfaces in all_data.items():
+        for interface, details in interfaces.items():
+            details['Interface'] = interface
+            df_rows.append(details)
 
-    # Assuming the parsing fills device_data with correct info
     df = pd.DataFrame(df_rows)
-
-    # Specify the columns order if needed
-    df = df[['Device', 'Interface', 'IP-Address', 'OK?', 'Status', 'Protocol', 'Description', 'Vlan', 'Duplex', 'Speed', 'Type']]
-
-    # Write the DataFrame to an Excel file
     df.to_excel('network_device_data.xlsx', index=False)
 
     print("Excel file created successfully.")
