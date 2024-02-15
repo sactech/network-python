@@ -2,7 +2,7 @@ import paramiko
 import pandas as pd
 import getpass
 import yaml
-from paramiko.ssh_exception import NoValidConnectionsError, SSHException, AuthenticationException
+from paramiko.ssh_exception import NoValidConnectionsError, SSHException, AuthenticationException, EOFError
 
 # Define a custom exception for when a device is not reachable.
 class DeviceNotReachableException(Exception):
@@ -14,6 +14,7 @@ def interface_matches(full_name, abbr_name):
         'Gi': 'GigabitEthernet',
         'Vl': 'Vlan',
         'Te': 'TenGigabitEthernet',
+        # Add other interface abbreviations as necessary
     }
     for abbr, full in abbr_to_full.items():
         if abbr_name.startswith(abbr):
@@ -23,14 +24,8 @@ def interface_matches(full_name, abbr_name):
 
 # Function to parse the command outputs and update the data list
 def parse_output(device, command, output, data):
-    lines = output.strip().split('\n')[1:]
-    for line in lines:
-        parts = line.split()
-        # Add your parsing logic here based on the output format
-        # Example for 'show ip interface brief':
-        if command == 'show ip interface brief' and len(parts) >= 6:
-            # Update your data structure here based on the parsed information
-            pass
+    # Implement parsing logic here based on the output format
+    pass
 
 # Function to load devices from a YAML file
 def load_devices(file_path="devices.yaml"):
@@ -46,9 +41,7 @@ def ssh_connect(hostname, username, password):
     ssh_client = paramiko.SSHClient()
     ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        print(f"Connecting to device: {hostname}")
-        ssh_client.connect(hostname, username=username, password=password)
-        print(f"Successfully connected to {hostname}")
+        ssh_client.connect(hostname, username=username, password=password, look_for_keys=False, allow_agent=False)
     except NoValidConnectionsError as e:
         print(f"Device {hostname} not reachable. Error: {e}")
         raise DeviceNotReachableException(f"Device {hostname} not reachable")
@@ -72,27 +65,29 @@ if __name__ == "__main__":
         try:
             client = ssh_connect(device['host'], username, password)
         except DeviceNotReachableException:
-            continue  # Skip this device and move to the next one
+            continue
         except AuthenticationException:
-            continue  # Skip this device and move to the next one
+            continue
         except SSHException:
-            continue  # Skip this device and move to the next one
+            continue
 
-        device_data = []
+        device_data = {'Device': device['host']}
         for command in ['show ip interface brief', 'show interface description', 'show interface status']:
             try:
-                print(f"Running command '{command}' on {device['host']}")
                 stdin, stdout, stderr = client.exec_command(command)
                 output = stdout.read().decode('utf-8')
                 parse_output(device['host'], command, output, device_data)
             except EOFError as e:
-                print(f"EOFError encountered while running '{command}' on {device['host']}")
+                print(f"EOFError encountered while running '{command}' on {device['host']}: {e}")
+            except SSHException as e:
+                print(f"SSHException encountered while running '{command}' on {device['host']}: {e}")
+                break
 
         client.close()
-        all_data.extend(device_data)
+        all_data.append(device_data)
 
-    columns = ['Device', 'Interface', 'IP-Address', 'Status', 'Protocol', 'Description', 'VLAN', 'Duplex', 'Speed', 'Type']
-    df = pd.DataFrame(all_data, columns=columns)
+    # Assuming device_data is a dictionary with keys corresponding to column names
+    df = pd.DataFrame(all_data)
 
     # Write the DataFrame to an Excel file
     df.to_excel('network_device_data.xlsx', index=False)
