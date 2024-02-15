@@ -1,130 +1,81 @@
-import re
-import pandas as pd
-import yaml
 import paramiko
-from getpass import getpass
+import pandas as pd
+import getpass
+import yaml
 
-# Load devices from the YAML file
-def load_devices(yaml_file_path):
-    with open(yaml_file_path) as file:
-        return yaml.safe_load(file)
+# Function to convert abbreviated interface names to full names for matching
+def interface_matches(full_name, abbr_name):
+    abbr_to_full = {
+        'Gi': 'GigabitEthernet',
+        'Vl': 'Vlan',
+        'Te': 'TenGigabitEthernet',
+    }
+    for abbr, full in abbr_to_full.items():
+        if abbr_name.startswith(abbr):
+            abbr_name = abbr_name.replace(abbr, full, 1)
+            break
+    return full_name == abbr_name
 
-# Create an SSH client and connect to a device
-def create_ssh_client(hostname, username, password):
+# Function to parse the command outputs and update the data list
+def parse_output(device, command, output, data):
+    lines = output.strip().split('\n')[1:]
+    for line in lines:
+        parts = line.split()
+        # Add your parsing logic here based on the output format
+        # Example for 'show ip interface brief':
+        if command == 'show ip interface brief' and len(parts) >= 6:
+            # Update your data structure here based on the parsed information
+            pass
+
+# Function to load devices from a YAML file
+def load_devices(file_path="devices.yaml"):
+    with open(file_path, 'r') as file:
+        content = yaml.safe_load(file)
+    devices = []
+    for category in content.values():
+        devices.extend(category['devices'])
+    return devices
+
+# Function to handle SSH connections with error checking
+def ssh_connect(hostname, username, password):
     ssh_client = paramiko.SSHClient()
-    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # Automatically accept the host key
     try:
-        ssh_client.connect(hostname=hostname, username=username, password=password)
-        print(f"Connected to {hostname}")
-        return ssh_client
-    except Exception as e:
-        print(f"An error occurred while connecting to {hostname}: {e}")
+        ssh_client.connect(hostname, username=username, password=password)
+    except paramiko.AuthenticationException:
+        print(f"Authentication failed for host {hostname}.")
         return None
+    except paramiko.SSHException as e:
+        print(f"SSH connection failed for host {hostname}: {e}")
+        return None
+    return ssh_client
 
-# Execute a command on the device and return the output
-def execute_command(ssh_client, command):
-    stdin, stdout, stderr = ssh_client.exec_command(command)
-    return stdout.read().decode('utf-8').strip()
-
-# Parse the 'show int status | include connected' output for Catalyst devices
-def parse_catalyst_int_status(output):
-    pattern = re.compile(r'(\S+)\s+connected\s+')
-    interfaces = []
-    for line in output.splitlines():
-        match = pattern.match(line)
-        if match:
-            interfaces.append(match.group(1))
-    return interfaces
-
-# Parsing for an Ethernet interface
-def parse_ethernet_interface(output):
-    details = {
-        'Interface': '',
-        'Description': '',
-        'Switchport Mode': '',
-        'Fex Associate': '',
-        'Channel-Group': '',
-    }
-    for line in output.splitlines():
-        line = line.strip()
-        if line.startswith('interface Ethernet'):
-            details['Interface'] = line.split()[-1]
-        elif line.startswith('description'):
-            details['Description'] = line.split(' ', 1)[1]
-        elif line.startswith('switchport mode'):
-            details['Switchport Mode'] = line.split()[-1]
-        elif line.startswith('fex associate'):
-            details['Fex Associate'] = line.split()[-1]
-        elif line.startswith('channel-group'):
-            details['Channel-Group'] = line.split()[-1]
-
-    return details
-
-# Parsing for a Vlan interface
-def parse_vlan_interface(output):
-    details = {
-        'Interface': '',
-        'VRF': '',
-        'IP Address': '',
-        'Tag': ''
-    }
-    for line in output.splitlines():
-        line = line.strip()
-        if line.startswith('interface Vlan'):
-            details['Interface'] = line.split()[-1]
-        elif line.startswith('vrf member'):
-            details['VRF'] = line.split()[-1]
-        elif line.startswith('ip address'):
-            ip_info = line.split()
-            details['IP Address'] = ip_info[2]
-            # Extracting the tag if present
-            if 'tag' in line:
-                details['Tag'] = ip_info[-1]
-
-    return details
-
-# Main execution function
-def main():
-    yaml_file_path = 'devices.yaml'  # Specify the path to your YAML file
-    devices_by_category = load_devices(yaml_file_path)
-
-    # Prompt for credentials
-    username = input("Enter username for all devices: ")
-    password = getpass("Enter password for all devices: ")
-
-    all_device_data = []
-
-    # Iterate over each device category and device within it
-    for category, devices in devices_by_category.items():
-        for device in devices:
-            hostname = device['host']
-            ssh_client = create_ssh_client(hostname, username, password)
-            if ssh_client:
-                try:
-                    if category.lower() == 'nexus':
-                        interfaces = parse_catalyst_int_status(
-                            execute_command(ssh_client, 'show int status | include connected'))
-                        for interface in interfaces:
-                            if interface.startswith('Eth'):
-                                eth_output = execute_command(ssh_client, f'sho run int {interface}')
-                                eth_config = parse_ethernet_interface(eth_output)
-                                all_device_data.append(eth_config)
-                            elif interface.startswith('Vlan'):
-                                vlan_output = execute_command(ssh_client, f'sho run int {interface}')
-                                vlan_config = parse_vlan_interface(vlan_output)
-                                all_device_data.append(vlan_config)
-                except Exception as e:
-                    print(f"An error occurred while processing {hostname}: {e}")
-                finally:
-                    ssh_client.close()
-
-    # Write the data to a CSV file
-    if all_device_data:
-        df = pd.DataFrame(all_device_data)
-        df.to_csv('network_data.csv', index=False)
-        print("Data collection complete. CSV file created.")
-    else:
-        print("No data was collected to write to CSV.")
-
+# Main script
 if __name__ == "__main__":
-    main()
+    username = input("Enter your SSH username: ")
+    password = getpass.getpass("Enter your SSH password: ")
+
+    all_data = []
+
+    for device in load_devices():
+        client = ssh_connect(device['host'], username, password)
+        if client is None:
+            continue  # Skip this device and move to the next one
+
+        device_data = []
+        for command in ['show ip interface brief', 'show interface description', 'show interface status']:
+            stdin, stdout, stderr = client.exec_command(command)
+            output = stdout.read().decode('utf-8')
+            parse_output(device['host'], command, output, device_data)
+
+        client.close()
+        all_data.extend(device_data)
+
+    # Assuming data is a list of lists, each inner list being a row of data
+    columns = ['Device', 'Interface', 'IP-Address', 'Status', 'Protocol', 'Description', 'VLAN', 'Duplex', 'Speed', 'Type']
+    df = pd.DataFrame(all_data, columns=columns)
+
+    # Write the DataFrame to an Excel file
+    df.to_excel('network_device_data.xlsx', index=False)
+
+    print("Excel file created successfully.")
