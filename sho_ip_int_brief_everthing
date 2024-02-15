@@ -1,0 +1,153 @@
+import paramiko
+import pandas as pd
+import getpass
+import yaml
+import re
+import logging
+from paramiko import SSHClient, AutoAddPolicy
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Read device information from YAML file
+def read_device_info(file_path='devices.yaml'):
+    with open(file_path) as file:
+        devices = yaml.safe_load(file)
+    return devices['devices']
+
+# Execute command on device and return output
+def execute_command(ssh_client, command):
+    stdin, stdout, stderr = ssh_client.exec_command(command)
+    return stdout.read().decode('utf-8')
+
+# Connect to device via SSH
+def connect_to_device(host, username, password):
+    client = SSHClient()
+    client.set_missing_host_key_policy(AutoAddPolicy())
+    client.connect(hostname=host, username=username, password=password)
+    return client
+
+# Parse 'show ip interface brief' output
+def parse_show_ip_int_brief(output):
+    data = []
+    for line in output.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) == 6:
+            data.append({
+                'Interface': parts[0],
+                'IP-Address': parts[1],
+                'OK?': parts[2],
+                'Method': parts[3],
+                'Status': parts[4],
+                'Protocol': parts[5],
+            })
+    return data
+
+# Parse 'show interfaces description' output
+def parse_show_int_desc(output):
+    data = []
+    for line in output.splitlines()[1:]:
+        parts = re.split(r'\s{2,}', line.strip())
+        if len(parts) >= 4:
+            data.append({
+                'Interface': parts[0],
+                'Status': parts[1],
+                'Protocol': parts[2],
+                'Description': parts[3],
+            })
+        else:
+            data.append({
+                'Interface': parts[0],
+                'Status': parts[1],
+                'Protocol': parts[2],
+                'Description': '',
+            })
+    return data
+
+# Parse 'show interfaces status' output
+def parse_show_int_status(output):
+    data = []
+    for line in output.splitlines()[1:]:
+        parts = re.split(r'\s{2,}', line)
+        if len(parts) == 7:
+            data.append({
+                'Port': parts[0],
+                'Name': parts[1],
+                'Status': parts[2],
+                'Vlan': parts[3],
+                'Duplex': parts[4],
+                'Speed': parts[5],
+                'Type': parts[6],
+            })
+    return data
+
+# Parse 'show run interface' output for a specific interface
+def parse_show_run_int(output):
+    data = {'Description': '', 'switchport access vlan': '', 'switchport mode': ''}
+    for line in output.splitlines():
+        if line.strip().startswith('description'):
+            data['Description'] = line.strip().split(' ', 1)[1]
+        elif line.strip().startswith('switchport access vlan'):
+            data['switchport access vlan'] = line.strip().split(' ', 3)[3]
+        elif line.strip().startswith('switchport mode'):
+            data['switchport mode'] = line.strip().split(' ', 2)[2]
+    return data
+
+# Main function
+def main():
+    devices = read_device_info()
+    username = input("Enter SSH username: ")
+    password = getpass.getpass("Enter SSH password: ")
+
+    all_devices_data = []
+
+    for device in devices:
+        host = device['host']
+        try:
+            ssh_client = connect_to_device(host, username, password)
+            logging.info(f"Connected to {host}")
+
+            # Aggregate data for each device
+            device_data = pd.DataFrame()
+
+            # Process 'show ip interface brief'
+            output = execute_command(ssh_client, "show ip interface brief")
+            ip_int_brief_data = parse_show_ip_int_brief(output)
+
+            # Process 'show interfaces description'
+            output = execute_command(ssh_client, "show interfaces description")
+            int_desc_data = parse_show_int_desc(output)
+
+            # Process 'show interfaces status'
+            output = execute_command(ssh_client, "show interfaces status")
+            int_status_data = parse_show_int_status(output)
+
+            # Convert parsed data to DataFrame
+            df_ip_int_brief = pd.DataFrame(ip_int_brief_data)
+            df_int_desc = pd.DataFrame(int_desc_data)
+            df_int_status = pd.DataFrame(int_status_data)
+
+            # Merge DataFrames based on Interface/Port
+            merged_df = pd.merge(df_ip_int_brief, df_int_desc, on='Interface', how='outer')
+            merged_df = pd.merge(merged_df, df_int_status, left_on='Interface', right_on='Port', how='outer')
+
+            # Dynamically process 'show run int' for each interface
+            for interface in merged_df['Interface'].dropna().unique():
+                output = execute_command(ssh_client, f"show run interface {interface}")
+                run_int_data = parse_show_run_int(output)
+                for key, value in run_int_data.items():
+                    merged_df.loc[merged_df['Interface'] == interface, key] = value
+
+            all_devices_data.append(merged_df)
+
+            ssh_client.close()
+        except Exception as e:
+            logging.error(f"Failed to process {host}: {e}")
+
+    # Combine all devices data into a single DataFrame and save to CSV
+    final_df = pd.concat(all_devices_data, ignore_index=True)
+    final_df.to_csv('network_data.csv', index=False)
+    logging.info("Data saved to network_data.csv")
+
+if __name__ == "__main__":
+    main()
