@@ -1,0 +1,119 @@
+import paramiko
+import socket
+import ipaddress
+import yaml
+from getpass import getpass
+import pandas as pd
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+
+def is_valid_ipv4(address):
+    try:
+        ipaddress.ip_address(address)
+        return True
+    except:
+        return False
+
+def dns_resolution(ip):
+    try:
+        return socket.gethostbyaddr(ip)[0]
+    except (socket.herror, socket.gaierror):
+        return 'Unresolvable'
+
+def fetch_data_from_device(ip, username, password, command):
+    ssh_client = paramiko.SSHClient()
+    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh_client.connect(ip, username=username, password=password)
+        stdin, stdout, stderr = ssh_client.exec_command(command)
+        output = stdout.read().decode()
+    except Exception as e:
+        print(f"Error connecting to device {ip}: {e}")
+        return ''
+    finally:
+        ssh_client.close()
+    return output
+
+def fetch_arp_and_vrf_data(ip, username, password, device_type):
+    arp_data = {}
+    if device_type == 'router':
+        arp_command = "show ip arp"
+        vrf_command = "show vrf"
+        vrfs = fetch_data_from_device(ip, username, password, vrf_command).strip().split("\n")
+        vrf_list = [line.split()[0] for line in vrfs if line and line.split()[0] != 'Name']
+        if not vrf_list:
+            vrf_list = ['default']
+    elif device_type == 'switch':
+        arp_command = "sho ip arp vrf all"
+        vrf_list = ['default']  # Assuming default VRF for simplicity
+    else:
+        return arp_data
+
+    for vrf in vrf_list:
+        command = arp_command if vrf == 'default' else f"{arp_command} vrf {vrf}"
+        output = fetch_data_from_device(ip, username, password, command).strip().split("\n")
+        for line in output:
+            if line and not line.startswith("Address") and not line.startswith("Flags") and not line.startswith("Total"):
+                parts = line.split()
+                if len(parts) >= 4 and is_valid_ipv4(parts[0]):
+                    arp_data[parts[2]] = (parts[0], vrf)
+    return arp_data
+
+def read_yaml_file(filename):
+    with open(filename, 'r') as file:
+        data = yaml.safe_load(file)
+    return data
+
+def send_email(subject, html_content, attachment_filename, recipients, smtp_server, port, sender_email, sender_password):
+    msg = MIMEMultipart()
+    msg['Subject'] = subject
+    msg['From'] = sender_email
+    msg['To'] = ', '.join(recipients)
+
+    msg.attach(MIMEText(html_content, 'html'))
+
+    with open(attachment_filename, 'rb') as file:
+        part = MIMEApplication(file.read(), Name=attachment_filename)
+    part['Content-Disposition'] = f'attachment; filename="{attachment_filename}"'
+    msg.attach(part)
+
+    with smtplib.SMTP(smtp_server, port) as server:
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+
+def main():
+    devices = read_yaml_file("devices.yaml")
+    username = input("Enter SSH username: ")
+    password = getpass("Enter SSH password: ")
+
+    columns = ['Device IP', 'MAC', 'IP', 'DNS Name', 'VRF']
+    df = pd.DataFrame(columns=columns)
+
+    for device_type in ['routers', 'switches']:
+        for ip in devices[device_type]:
+            print(f"Fetching data from {device_type[:-1]}: {ip}")
+            arp_data = fetch_arp_and_vrf_data(ip, username, password, device_type[:-1])
+            for mac, (ip_addr, vrf) in arp_data.items():
+                dns_name = dns_resolution(ip_addr)
+                df.loc[len(df)] = [ip, mac, ip_addr, dns_name, vrf]
+
+    csv_filename = 'output.csv'
+    df.to_csv(csv_filename, index=False)
+    html = df.to_html(index=False)
+
+    # Define email parameters
+    subject = "Network Devices Data"
+    recipients = ['recipient@example.com']  # Add your recipient list
+    smtp_server = 'smtp.example.com'
+    port = 587  # SMTP port (587 for TLS)
+    sender_email = 'your_email@example.com'
+    sender_password = 'your_email_password'
+
+    send_email(subject, html, csv_filename, recipients, smtp_server, port, sender_email, sender_password)
+
+    print("\nData collection complete. Output written to CSV and email sent.")
+
+if __name__ == "__main__":
+    main()
