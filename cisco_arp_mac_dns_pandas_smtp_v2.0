@@ -1,3 +1,4 @@
+import os
 import paramiko
 import socket
 import ipaddress
@@ -38,33 +39,34 @@ def fetch_data_from_device(ip, username, password, command):
 
 def fetch_arp_and_vrf_data(ip, username, password, device_type):
     arp_data = {}
-    if device_type == 'router':
-        arp_command = "show ip arp"
-        vrf_command = "show vrf"
-        vrfs = fetch_data_from_device(ip, username, password, vrf_command).strip().split("\n")
-        vrf_list = [line.split()[0] for line in vrfs if line and line.split()[0] != 'Name']
-        if not vrf_list:
-            vrf_list = ['default']
-    elif device_type == 'switch':
-        arp_command = "sho ip arp vrf all"
-        vrf_list = ['default']  # Assuming default VRF for simplicity
-    else:
-        return arp_data
-
-    for vrf in vrf_list:
-        command = arp_command if vrf == 'default' else f"{arp_command} vrf {vrf}"
-        output = fetch_data_from_device(ip, username, password, command).strip().split("\n")
-        for line in output:
-            if line and not line.startswith("Address") and not line.startswith("Flags") and not line.startswith("Total"):
-                parts = line.split()
-                if len(parts) >= 4 and is_valid_ipv4(parts[0]):
-                    arp_data[parts[2]] = (parts[0], vrf)
+    arp_command = "sho ip arp vrf all" if device_type == 'switch' else "show ip arp"
+    
+    output = fetch_data_from_device(ip, username, password, arp_command).strip().split("\n")
+    print("Raw command output for debugging:", output)  # Debugging line to print raw command output
+    parse = False
+    for line in output:
+        if parse and line.strip():
+            parts = line.split()
+            if len(parts) >= 4 and is_valid_ipv4(parts[0]):
+                ip_addr = parts[0]
+                mac_addr = parts[2]
+                interface = parts[3]
+                arp_data[mac_addr] = (ip_addr, 'default', interface)  # Assuming 'default' VRF for simplicity
+        elif "Address" in line:
+            parse = True  # Start parsing from the next line onwards
+    
     return arp_data
 
 def read_yaml_file(filename):
-    with open(filename, 'r') as file:
-        data = yaml.safe_load(file)
-    return data
+    try:
+        with open(filename, 'r') as file:
+            data = yaml.safe_load(file)
+        if data is None:
+            return {}  # Returns an empty dictionary if the YAML file is empty or improperly formatted
+        return data
+    except Exception as e:
+        print(f"Error reading YAML file: {e}")
+        return {}
 
 def send_email(subject, html_content, attachment_filename, recipients, smtp_server, port, sender_email, sender_password):
     msg = MIMEMultipart()
@@ -85,35 +87,36 @@ def send_email(subject, html_content, attachment_filename, recipients, smtp_serv
 
 def main():
     devices = read_yaml_file("devices.yaml")
+    if not devices:  # Check if devices dict is empty
+        print("No devices found in YAML file. Exiting.")
+        return
+
     username = input("Enter SSH username: ")
     password = getpass("Enter SSH password: ")
 
-    columns = ['Device IP', 'MAC', 'IP', 'DNS Name', 'VRF']
+    columns = ['Device IP', 'MAC', 'IP', 'DNS Name', 'VRF', 'Interface']
     df = pd.DataFrame(columns=columns)
 
     for device_type in ['routers', 'switches']:
-        for ip in devices[device_type]:
+        for ip in devices.get(device_type, []):  # Uses an empty list if the device_type key is not found
             print(f"Fetching data from {device_type[:-1]}: {ip}")
             arp_data = fetch_arp_and_vrf_data(ip, username, password, device_type[:-1])
-            for mac, (ip_addr, vrf) in arp_data.items():
+            for mac, (ip_addr, vrf, interface) in arp_data.items():
                 dns_name = dns_resolution(ip_addr)
-                df.loc[len(df)] = [ip, mac, ip_addr, dns_name, vrf]
+                df.loc[len(df)] = [ip, mac, ip_addr, dns_name, vrf, interface]
 
     csv_filename = 'output.csv'
     df.to_csv(csv_filename, index=False)
-    html = df.to_html(index=False)
+    print("Data collection complete. Output written to CSV.")
 
-    # Define email parameters
-    subject = "Network Devices Data"
-    recipients = ['recipient@example.com']  # Add your recipient list
-    smtp_server = 'smtp.example.com'
-    port = 587  # SMTP port (587 for TLS)
-    sender_email = 'your_email@example.com'
-    sender_password = 'your_email_password'
-
-    send_email(subject, html, csv_filename, recipients, smtp_server, port, sender_email, sender_password)
-
-    print("\nData collection complete. Output written to CSV and email sent.")
+    # Check if USE_SMTP environment variable is set to "True"
+    use_smtp = os.getenv('USE_SMTP', 'False').lower() in ('true', '1', 't')
+    if use_smtp:
+        # Replace placeholders with your actual data
+        send_email("Network Devices Data", df.to_html(index=False), csv_filename, ["recipient@example.com"], "smtp.example.com", 587, "your_email@example.com", "your_email_password")
+        print("\nEmail sent.")
+    else:
+        print("\nSMTP email sending is disabled.")
 
 if __name__ == "__main__":
     main()
