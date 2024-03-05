@@ -28,30 +28,39 @@ def execute_command(host, username, password, command):
 def parse_show_interface_status(output):
     status_entries = []
     for line in output.splitlines():
-        if re.match(r'^Eth', line):
-            parts = re.split(r'\s{2,}', line)
-            if len(parts) >= 7:
-                port, status, vlan, duplex, speed, type = parts[0], parts[2], parts[3], parts[4], parts[5], parts[6]
-                status_entries.append({'Port': port, 'Status': status, 'Vlan': vlan, 'Duplex': duplex, 'Speed': speed, 'Type': type})
+        if line.strip() and not line.startswith('Port') and not line.startswith('-----'):
+            parts = line.split()
+            if len(parts) > 6:  # Handle lines where 'Name' field might have spaces
+                port = parts[0]
+                status = parts[-5]
+                vlan = parts[-4]
+                duplex = parts[-3]
+                speed = parts[-2]
+                type = parts[-1]
+                name = " ".join(parts[1:-5])
+                status_entries.append({'Port': port, 'Name': name, 'Status': status, 'Vlan': vlan, 'Duplex': duplex, 'Speed': speed, 'Type': type})
+            else:
+                logging.warning(f"Skipping unexpected line format: {line}")
     return status_entries
 
 def parse_show_interface_description(output):
     desc_entries = {}
-    for line in output.splitlines():
-        match = re.match(r'^(Eth[0-9/]+)\s+(.*)', line)
-        if match:
-            interface, description = match.groups()
-            desc_entries[interface] = {'Description': description}
+    for line in output.splitlines()[2:]:  # Adjust based on your actual command output header
+        if line.strip() and not line.startswith('Interface') and not line.startswith('-----'):
+            parts = line.split(maxsplit=1)
+            if len(parts) == 2:
+                interface, description = parts[0], parts[1]
+                desc_entries[interface] = description
     return desc_entries
 
 def parse_show_ip_interface_brief(output):
     ip_entries = {}
     for line in output.splitlines():
-        if re.match(r'^(Vlan|Eth|Lo|mgmt0)', line):
+        if line.strip() and not line.startswith('Interface') and not line.startswith('IP Address') and not line.startswith('-----'):
             parts = line.split()
             if len(parts) >= 6:
                 interface, ip_address = parts[0], parts[1]
-                ip_entries[interface] = {'IP Address': ip_address, 'Interface Status': " ".join(parts[2:])}
+                ip_entries[interface] = ip_address
     return ip_entries
 
 def parse_show_mac_address_table(output):
@@ -65,17 +74,15 @@ def parse_show_mac_address_table(output):
 
 def combine_data(status_data, desc_data, ip_data, mac_data):
     combined_data = []
-    for entry in status_data:
-        port = entry['Port']
-        combined_entry = entry.copy()
-        combined_entry.update(desc_data.get(port, {}))
-        combined_entry.update(ip_data.get(port, {'IP Address': 'N/A', 'Interface Status': 'N/A'}))
-        mac_entries = [item for item in mac_data if item['Port'] == port]
-        if mac_entries:
-            for mac_entry in mac_entries:
-                combined_data.append({**combined_entry, **mac_entry})
-        else:
-            combined_data.append(combined_entry)
+    for status in status_data:
+        port = status['Port']
+        combined = status.copy()
+        combined['Description'] = desc_data.get(port, '')
+        combined['IP Address'] = ip_data.get(port, 'N/A')
+        mac_info = next((item for item in mac_data if item['Port'] == port), None)
+        combined['MAC Address'] = mac_info['MAC Address'] if mac_info else 'N/A'
+        combined['MAC VLAN'] = mac_info['VLAN'] if mac_info else 'N/A'
+        combined_data.append(combined)
     return combined_data
 
 def main():
@@ -88,32 +95,25 @@ def main():
     for device in devices:
         logging.info(f"Processing device: {device}")
 
-        commands = {
-            "show interface status": parse_show_interface_status,
-            "show interface description": parse_show_interface_description,
-            "show ip interface brief": parse_show_ip_interface_brief,
-            "show mac address-table": parse_show_mac_address_table,
-        }
+        status_output = execute_command(device, username, password, "show interface status")
+        desc_output = execute_command(device, username, password, "show interface description")
+        ip_output = execute_command(device, username, password, "show ip interface brief")
+        mac_output = execute_command(device, username, password, "show mac address-table")
 
-        data_collect = {}
-        for cmd, func in commands.items():
-            output = execute_command(device, username, password, cmd)
-            if output:
-                data_collect[cmd] = func(output)
-            else:
-                data_collect[cmd] = []
+        status_data = parse_show_interface_status(status_output)
+        desc_data = parse_show_interface_description(desc_output)
+        ip_data = parse_show_ip_interface_brief(ip_output)
+        mac_data = parse_show_mac_address_table(mac_output)
 
-        combined_data = combine_data(data_collect["show interface status"], data_collect["show interface description"], 
-                                     data_collect["show ip interface brief"], data_collect["show mac address-table"])
+        combined_data = combine_data(status_data, desc_data, ip_data, mac_data)
 
         for data in combined_data:
-            data['Device'] = device  # Adding device name to each row
+            data['Device'] = device
 
         all_data.extend(combined_data)
 
     df = pd.DataFrame(all_data)
     if not df.empty:
-        # Ensure 'Device' column is at the front
         df = df[['Device'] + [col for col in df.columns if col != 'Device']]
         df.to_csv('network_data_combined.csv', index=False)
         logging.info("Data successfully saved to network_data_combined.csv.")
