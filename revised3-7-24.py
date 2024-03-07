@@ -30,11 +30,8 @@ def execute_command(host, username, password, command):
         return None
 
 def parse_show_interface_description(output):
-    if not output:
-        return {}
     desc_entries = {}
-    lines = output.splitlines()
-    for line in lines:
+    for line in output.splitlines():
         match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+(.*)', line)
         if match:
             interface, description = match.groups()
@@ -42,11 +39,8 @@ def parse_show_interface_description(output):
     return desc_entries
 
 def parse_show_interface_brief(output):
-    if not output:
-        return {}
     brief_entries = {}
-    lines = output.splitlines()
-    for line in lines:
+    for line in output.splitlines():
         match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+\d+\s+(\S+)\s+(\S+)\s+(\S+)', line)
         if match:
             interface, _, status, _ = match.groups()
@@ -54,24 +48,24 @@ def parse_show_interface_brief(output):
     return brief_entries
 
 def parse_show_mac_address_table(output):
-    if not output:
-        return []
     mac_entries = []
-    lines = output.splitlines()
-    for line in lines:
-        match = re.match(r'\d+\s+([0-9a-fA-F.:]+)\s+DYNAMIC\s+(\S+)', line)
+    for line in output.splitlines():
+        match = re.match(r'\s*\S*\s+(\d+)\s+([0-9a-fA-F.:]+)\s+\S+\s+\S+\s+\S+\s+\S+\s+([\w\-/]+)', line)
         if match:
-            mac_address, port = match.groups()
-            mac_entries.append((mac_address.lower(), port))
+            vlan, mac_address, port = match.groups()
+            mac_entries.append({"vlan": vlan, "mac_address": mac_address.lower(), "port": port})
     return mac_entries
 
 def combine_data(device, brief_data, desc_data, mac_data):
     combined_data = []
-    for mac_address, port in mac_data:
+    for entry in mac_data:
+        port = entry["port"]
+        vlan = entry["vlan"]
+        mac_address = entry["mac_address"]
         description = desc_data.get(port, "No description")
-        port_info = brief_data.get(port, {'Status': 'Unknown'})
-        status = port_info.get('Status')
-        combined_entry = [device, port, description, status, mac_address]
+        status = brief_data.get(port, {}).get('Status', 'Unknown') if brief_data else 'Unknown'
+        
+        combined_entry = [device, vlan, port, mac_address, description, status]
         combined_data.append(combined_entry)
     return combined_data
 
@@ -84,19 +78,19 @@ def main():
 
     for device_hostname in devices:
         logging.info(f"Processing device: {device_hostname}")
-        desc_output = execute_command(device_hostname, username, password, "show int description")
+        desc_output = execute_command(device_hostname, username, password, "show interface description")
         brief_output = execute_command(device_hostname, username, password, "show interface brief")
         mac_output = execute_command(device_hostname, username, password, "show mac address-table")
 
-        desc_data = parse_show_interface_description(desc_output or "")
-        brief_data = parse_show_interface_brief(brief_output or "")
-        mac_data = parse_show_mac_address_table(mac_output or "")
+        desc_data = parse_show_interface_description(desc_output) if desc_output else {}
+        brief_data = parse_show_interface_brief(brief_output) if brief_output else {}
+        mac_data = parse_show_mac_address_table(mac_output) if mac_output else []
 
         combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
         all_data.extend(combined_data)
 
     if all_data:
-        df = pd.DataFrame(all_data, columns=['Device', 'Port', 'Description', 'Status', 'MAC Address'])
+        df = pd.DataFrame(all_data, columns=['Device', 'VLAN', 'Port', 'MAC Address', 'Description', 'Status'])
         df.to_csv('network_data_combined.csv', index=False)
         logging.info("Data successfully saved to network_data_combined.csv.")
     else:
