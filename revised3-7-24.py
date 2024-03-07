@@ -21,7 +21,6 @@ def execute_command(host, username, password, command):
             client.connect(hostname=host, username=username, password=password, timeout=10)
             stdin, stdout, stderr = client.exec_command(command)
             command_output = stdout.read().decode('utf-8').strip()
-            logging.debug(f"Command: {command}\nOutput:\n{command_output}\n")
             if not command_output:
                 logging.warning(f"No output for {command} on {host}.")
                 return None
@@ -37,7 +36,6 @@ def parse_show_interface_description(output):
         if match:
             interface, description = match.groups()
             desc_entries[interface.strip()] = description.strip()
-    logging.debug(f"Parsed description data: {desc_entries}")
     return desc_entries
 
 def parse_show_interface_brief(output):
@@ -52,7 +50,6 @@ def parse_show_interface_brief(output):
                 'VLAN': vlan,
                 'Status': status,
             })
-    logging.debug(f"Parsed brief data: {brief_entries}")
     return brief_entries
 
 def parse_show_mac_address_table(output):
@@ -62,7 +59,6 @@ def parse_show_mac_address_table(output):
         if match:
             vlan, mac_address, port = match.groups()
             mac_entries.append({"vlan": vlan, "mac_address": mac_address.lower(), "port": port})
-    logging.debug(f"Parsed MAC data: {mac_entries}")
     return mac_entries
 
 def combine_data(device, brief_data, desc_data, mac_data):
@@ -73,16 +69,16 @@ def combine_data(device, brief_data, desc_data, mac_data):
         mac_address = entry["mac_address"]
         description = desc_data.get(port, "No description")
         status = next((item['Status'] for item in brief_data if item['Port'] == port), 'Unknown')
+        
         combined_entry = {
             'Device': device,
-            'Port': port,
             'VLAN': vlan,
+            'Port': port,
             'MAC Address': mac_address,
             'Description': description,
             'Status': status
         }
         combined_data.append(combined_entry)
-    logging.debug(f"Combined data: {combined_data}")
     return combined_data
 
 def main():
@@ -94,7 +90,7 @@ def main():
 
     for device_hostname in devices:
         logging.info(f"Processing device: {device_hostname}")
-        desc_output = execute_command(device_hostname, username, password, "show int description")
+        desc_output = execute_command(device_hostname, username, password, "show interface description")
         brief_output = execute_command(device_hostname, username, password, "show interface brief")
         mac_output = execute_command(device_hostname, username, password, "show mac address-table")
 
@@ -106,7 +102,7 @@ def main():
         all_data.extend(combined_data)
 
     if all_data:
-        df = pd.DataFrame.from_records(all_data)
+        df = pd.DataFrame.from_records(all_data, columns=['Device', 'VLAN', 'Port', 'MAC Address', 'Description', 'Status'])
         df.to_csv('network_data_combined.csv', index=False)
         logging.info("Data successfully saved to network_data_combined.csv.")
     else:
