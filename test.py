@@ -5,6 +5,7 @@ import yaml
 import logging
 import re
 import concurrent.futures
+import time
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -34,13 +35,10 @@ def parse_show_interface_brief(output):
     headers = lines[1].strip().split()  # Assuming headers on the second line
     for line in lines[2:]:  # Skip headers
         fields = line.strip().split()
-        if len(fields) == len(headers):  # Ensure matching number of fields
-            port_status = fields[1]
-            if port_status in ['up', 'down']:
-                fields[1] = port_status
-            else:
-                fields.insert(1, 'N/A')  # If status is not 'up' or 'down', set it to 'N/A'
-            interface_data.append(dict(zip(headers, fields)))
+        if len(fields) >= 2:  # Ensure at least two fields
+            port = fields[0]
+            status = ' '.join(fields[1:])
+            interface_data.append({'Port': port, 'Status': status})
     return interface_data
 
 def parse_show_interface_descriptions(output):
@@ -86,6 +84,8 @@ def process_device(device):
         'password': password,
         'secret': password,  # assuming enable password is the same
     }
+
+    time.sleep(2)  # Adding a delay to slow down the authentication process
 
     brief_output = execute_command(device_details, "show interface brief")
     desc_output = execute_command(device_details, "show interface description")
