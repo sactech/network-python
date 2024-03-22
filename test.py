@@ -105,17 +105,17 @@ def main():
 
     all_data = []
 
-    for device_info in devices:
-        logging.info(f"Processing device: {device_info['host']}")
-        desc_output = execute_command(device_info, "show int description")
-        brief_output = execute_command(device_info, "show interface brief")
-        mac_output = execute_command(device_info, "show mac address-table")
+    for device_hostname in devices:
+        logging.info(f"Processing device: {device_hostname}")
+        desc_output = execute_command(device_hostname, username, password, "show int description")
+        brief_output = execute_command(device_hostname, username, password, "show interface brief")
+        mac_output = execute_command(device_hostname, username, password, "show mac address-table")
 
         desc_data = parse_show_interface_description(desc_output)
         brief_data = parse_show_interface_brief(brief_output)
         mac_data = parse_show_mac_address_table(mac_output)
 
-        combined_data = combine_data(device_info['host'], brief_data, desc_data, mac_data)
+        combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
 
         all_data.extend(combined_data)
 
