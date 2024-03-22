@@ -39,15 +39,19 @@ def parse_show_interface_brief(output):
     return interface_data
 
 def parse_show_interface_descriptions(output):
-    # Simplified parsing assuming consistent format
     desc_data = {}
-    lines = output.splitlines()[5:]  # Skip header lines
+    lines = output.splitlines()
+    port_section_started = False
     for line in lines:
-        fields = line.split()
-        if len(fields) >= 3:
-            port = fields[0]
-            description = ' '.join(fields[1:])
-            desc_data[port] = description
+        if line.strip() == "Port          Type   Speed   Description":
+            port_section_started = True
+            continue
+        if port_section_started:
+            fields = line.split(maxsplit=3)
+            if len(fields) >= 4:
+                port = fields[0].strip()
+                description = fields[-1].strip()
+                desc_data[port] = description
     return desc_data
 
 def parse_show_mac_address_table(output):
