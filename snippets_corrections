@@ -1,99 +1,91 @@
-from netmiko import ConnectHandler
+import paramiko
 import pandas as pd
 import getpass
 import yaml
+import logging
 import re
 
-# Parsing functions
-def parse_mac_address_table(output):
-    """Parse the 'show mac address-table' output to collect MAC addresses."""
-    mac_data = {}
-    regex = re.compile(r'^\*\s+\d+\s+([\da-fA-F.]+)\s+\w+\s+\d+\s+\w+\s+\w+\s+(\S+)')
-    for line in output.splitlines():
-        match = regex.search(line.strip())
-        if match:
-            mac_address, port = match.groups()
-            mac_data.setdefault(port, []).append(mac_address)
-    return mac_data
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def parse_interface_brief(output):
-    """Parse the 'show interface brief' output."""
-    brief_data = {}
-    regex = re.compile(r'^(Eth\d+/\d+)\s+(\d+|--)\s+\w+\s+\w+\s+(\w+)')
+def read_device_info(file_path='devices.yaml'):
+    with open(file_path) as file:
+        return yaml.safe_load(file).get('switches', [])
+
+def execute_command(device, command):
+    logging.info(f"Executing command on {device['ip']}: {command}")
+    try:
+        with paramiko.SSHClient() as ssh:
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(device['ip'], username=device['username'], password=device['password'])
+            _, stdout, _ = ssh.exec_command(command)
+            return stdout.read().decode('utf-8')
+    except Exception as e:
+        logging.error(f"Failed to execute command on {device['ip']}: {e}")
+        return ""
+
+def parse_show_mac_address_table(output):
+    mac_entries = {}
+    regex = re.compile(r'(?P<vlan>\d+)\s+(?P<mac>[0-9a-f.]+)\s+\S+\s+\S+\s+\S+\s+(?P<interface>Eth\d+/\d+|Po\d+)')
     for line in output.splitlines():
-        match = regex.search(line.strip())
+        match = regex.match(line)
+        if match:
+            vlan, mac, interface = match.groups()
+            mac_entries.setdefault(interface, []).append({'VLAN': vlan, 'MAC': mac})
+    return mac_entries
+
+def parse_show_interface_brief(output):
+    brief_entries = {}
+    regex = re.compile(r'^(?P<interface>Eth\d+/\d+|mgmt0)\s+(?P<vlan>\d+|--)\s+\S+\s+(?P<status>up|down)')
+    for line in output.splitlines():
+        match = regex.match(line)
         if match:
             interface, vlan, status = match.groups()
-            vlan = vlan if vlan != '--' else 'N/A'
-            brief_data[interface] = {'VLAN': vlan, 'Status': status}
-    return brief_data
+            brief_entries[interface] = {'VLAN': vlan, 'Status': status}
+    return brief_entries
 
-def parse_interface_description(output):
-    """Parse the 'show interface description' output."""
-    desc_data = {}
-    regex = re.compile(r'^(Eth\d+/\d+)\s+eth\s+\d+\s+(.*)$')
+def parse_show_interface_description(output):
+    desc_entries = {}
+    regex = re.compile(r'^(?P<interface>Eth\d+/\d+|Po\d+|mgmt0)\s+\S+\s+\S+\s+(?P<description>.+)$')
     for line in output.splitlines():
-        match = regex.search(line.strip())
+        match = regex.match(line)
         if match:
             interface, description = match.groups()
-            desc_data[interface] = description or 'N/A'
-    return desc_data
+            desc_entries[interface] = description
+    return desc_entries
 
-# Device command execution and data collection
-def collect_data_from_device(device_info):
-    device_type = 'cisco_nxos'  # For Cisco Nexus devices
-    ssh_connection = ConnectHandler(device_type=device_type, **device_info)
-    collected_data = {
-        'mac_address_table': parse_mac_address_table(ssh_connection.send_command("show mac address-table")),
-        'interface_brief': parse_interface_brief(ssh_connection.send_command("show interface brief")),
-        'interface_description': parse_interface_description(ssh_connection.send_command("show interface description")),
-    }
-    ssh_connection.disconnect()
-    return collected_data
-
-# Main function
-def main():
-    devices_yaml = 'devices.yaml'
-    with open(devices_yaml) as file:
-        devices = yaml.safe_load(file).get('switches', [])
-
-    username = input("Enter SSH username: ")
-    password = getpass.getpass("Enter SSH password: ")
-
-    all_data = []
-    for device_ip in devices:
-        device_info = {
-            'host': device_ip,
-            'username': username,
-            'password': password,
-            'secret': password,  # Assuming enable password is the same
-        }
-        device_data = collect_data_from_device(device_info)
-        
-        # Data combination logic goes here
-        # This is a placeholder for how you might start combining your data.
-        # You will need to expand upon this to meet your exact requirements.
-        
-        for interface, macs in device_data['mac_address_table'].items():
+def combine_data(devices, mac_data, brief_data, desc_data):
+    combined = []
+    for device in devices:
+        for interface, macs in mac_data[device['ip']].items():
             for mac in macs:
-                brief_info = device_data['interface_brief'].get(interface, {})
-                desc_info = device_data['interface_description'].get(interface, 'N/A')
-                combined_entry = {
-                    'Device': device_ip,
+                combined.append({
+                    'Device': device['ip'],
                     'Interface': interface,
-                    'Description': desc_info,
-                    'VLAN': brief_info.get('VLAN', 'N/A'),
-                    'Status': brief_info.get('Status', 'N/A'),
-                    'MAC Address': mac,
-                }
-                all_data.append(combined_entry)
+                    'MAC Address': mac['MAC'],
+                    'VLAN': mac['VLAN'],
+                    'Status': brief_data[device['ip']].get(interface, {}).get('Status', 'N/A'),
+                    'Description': desc_data[device['ip']].get(interface, 'N/A'),
+                })
+    return combined
 
-    if all_data:
-        df = pd.DataFrame(all_data)
+def main():
+    devices_info = read_device_info()
+    devices = [{'ip': ip, 'username': 'admin', 'password': 'admin'} for ip in devices_info] # Example credentials
+
+    mac_data, brief_data, desc_data = {}, {}, {}
+    for device in devices:
+        mac_data[device['ip']] = parse_show_mac_address_table(execute_command(device, "show mac address-table"))
+        brief_data[device['ip']] = parse_show_interface_brief(execute_command(device, "show interface brief"))
+        desc_data[device['ip']] = parse_show_interface_description(execute_command(device, "show interface description"))
+
+    combined_data = combine_data(devices, mac_data, brief_data, desc_data)
+    if combined_data:
+        df = pd.DataFrame(combined_data)
         df.to_csv('network_data_combined.csv', index=False)
-        print("Data successfully saved to 'network_data_combined.csv'.")
+        logging.info("Data successfully saved to 'network_data_combined.csv'.")
     else:
-        print("No data collected.")
+        logging.warning("No data collected.")
 
 if __name__ == "__main__":
     main()
