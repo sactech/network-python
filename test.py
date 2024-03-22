@@ -13,13 +13,15 @@ def read_device_info(file_path='devices.yaml'):
         devices = yaml.safe_load(file)
     return devices.get('switches', [])
 
-def execute_command(ssh_conn, command):
+def execute_command(device_info, command):
     try:
-        output = ssh_conn.send_command(command)
-        logging.debug(f"Command: {command}\nOutput:\n{output}\n")
-        return output
+        logging.info(f"Connecting to device: {device_info['host']}")
+        with ConnectHandler(**device_info) as ssh:
+            output = ssh.send_command(command)
+            logging.debug(f"Command: {command}\nOutput:\n{output}\n")
+            return output
     except Exception as e:
-        logging.error(f"Failed to execute command: {e}")
+        logging.error(f"Failed to execute command on {device_info['host']}: {e}")
         return ""
 
 def parse_show_interface_description(output):
@@ -83,15 +85,16 @@ def combine_data(device, brief_data, desc_data, mac_data):
         status = entry['Status']
         vlan = entry['VLAN']
         mac_addresses = mac_data.get(port, ['N/A'])
-        combined_entry = {
-            'Device': device,
-            'Port': port,
-            'Name': name,
-            'Status': status,
-            'VLAN': vlan,
-            'MAC Address': ', '.join(mac_addresses)
-        }
-        combined_data.append(combined_entry)
+        for mac_address in mac_addresses:
+            combined_entry = {
+                'Device': device,
+                'Port': port,
+                'Name': name,
+                'Status': status,
+                'VLAN': vlan,
+                'MAC Address': mac_address
+            }
+            combined_data.append(combined_entry)
     logging.debug(f"Combined data: {combined_data}")
     return combined_data
 
@@ -102,23 +105,17 @@ def main():
 
     all_data = []
 
-    for device_hostname in devices:
-        logging.info(f"Processing device: {device_hostname}")
-        try:
-            ssh_conn = ConnectHandler(device_type='cisco_ios', host=device_hostname, username=username, password=password)
-            desc_output = execute_command(ssh_conn, "show int description")
-            brief_output = execute_command(ssh_conn, "show interface brief")
-            mac_output = execute_command(ssh_conn, "show mac address-table")
-            ssh_conn.disconnect()
-        except Exception as e:
-            logging.error(f"Failed to connect to device {device_hostname}: {e}")
-            continue
+    for device_info in devices:
+        logging.info(f"Processing device: {device_info['host']}")
+        desc_output = execute_command(device_info, "show int description")
+        brief_output = execute_command(device_info, "show interface brief")
+        mac_output = execute_command(device_info, "show mac address-table")
 
         desc_data = parse_show_interface_description(desc_output)
         brief_data = parse_show_interface_brief(brief_output)
         mac_data = parse_show_mac_address_table(mac_output)
 
-        combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
+        combined_data = combine_data(device_info['host'], brief_data, desc_data, mac_data)
 
         all_data.extend(combined_data)
 
