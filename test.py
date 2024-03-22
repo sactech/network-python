@@ -11,14 +11,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def read_device_info(file_path='devices.yaml'):
     with open(file_path) as file:
         devices = yaml.safe_load(file)
-    return devices.get('switches', [])
+    return devices
 
 def execute_command(device_info, command):
     try:
         logging.info(f"Connecting to device: {device_info['host']}")
         with ConnectHandler(**device_info) as ssh:
             output = ssh.send_command(command)
-            logging.debug(f"Command: {command}\nOutput:\n{output}\n")
+            logging.debug(f"Command: {command}\nOutput:\n{output}")
             return output
     except Exception as e:
         logging.error(f"Failed to execute command on {device_info['host']}: {e}")
@@ -59,7 +59,6 @@ def parse_show_interface_brief(output):
 def parse_show_mac_address_table(output):
     mac_entries = {}
     lines = output.splitlines()
-    # Find the index for the line that starts with "VLAN" to skip the header dynamically
     start_index = 0
     for i, line in enumerate(lines):
         if line.strip().startswith("VLAN"):
@@ -71,10 +70,10 @@ def parse_show_mac_address_table(output):
         match = regex.search(line)
         if match:
             vlan, mac_address, _, port = match.groups()
-            # Skip entries without a valid VLAN number
             if vlan == '-':
                 continue
             mac_entries.setdefault(port, []).append(mac_address)
+    logging.debug(f"Parsed MAC address data: {mac_entries}")
     return mac_entries
 
 def combine_data(device, brief_data, desc_data, mac_data):
@@ -105,14 +104,20 @@ def main():
 
     all_data = []
 
-    for device_hostname in devices:
+    for device_hostname in devices['switches']:
+        device_info = {
+            'device_type': 'cisco_nxos',  # Specific to Cisco NX-OS devices
+            'host': device_hostname,
+            'username': username,
+            'password': password
+        }
         logging.info(f"Processing device: {device_hostname}")
-        desc_output = execute_command(device_hostname, username, password, "show int description")
-        brief_output = execute_command(device_hostname, username, password, "show interface brief")
-        mac_output = execute_command(device_hostname, username, password, "show mac address-table")
+        desc_output = execute_command(device_info, "show interface description")
+        brief_output = execute_command(device_info, "show interface brief")
+        mac_output = execute_command(device_info, "show mac address-table")
 
         desc_data = parse_show_interface_description(desc_output)
-        brief_data = parse_show_interface_brief(brief_output)
+                brief_data = parse_show_interface_brief(brief_output)
         mac_data = parse_show_mac_address_table(mac_output)
 
         combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
