@@ -15,10 +15,10 @@ def read_device_info(file_path='devices.yaml'):
 
 def execute_command(device_info, command):
     try:
-        with ConnectHandler(**device_info) as ssh_conn:
-            output = ssh_conn.send_command(command)
-            logging.debug(f"Command: {command}\nOutput:\n{output}\n")
-            return output
+        with ConnectHandler(**device_info) as ssh:
+            command_output = ssh.send_command(command)
+            logging.debug(f"Command: {command}\nOutput:\n{command_output}\n")
+            return command_output
     except Exception as e:
         logging.error(f"Failed to execute command on {device_info['host']}: {e}")
         return ""
@@ -76,7 +76,7 @@ def parse_show_mac_address_table(output):
             mac_entries.setdefault(port, []).append(mac_address)
     return mac_entries
 
-def combine_data(device, brief_data, desc_data, mac_data):
+def combine_data(device_info, brief_data, desc_data, mac_data):
     combined_data = []
     for entry in brief_data:
         port = entry['Port']
@@ -85,7 +85,7 @@ def combine_data(device, brief_data, desc_data, mac_data):
         vlan = entry['VLAN']
         mac_addresses = mac_data.get(port, ['N/A'])
         combined_entry = {
-            'Device': device,
+            'Device': device_info['host'],
             'Port': port,
             'Name': name,
             'Status': status,
@@ -113,7 +113,7 @@ def main():
         brief_data = parse_show_interface_brief(brief_output)
         mac_data = parse_show_mac_address_table(mac_output)
 
-        combined_data = combine_data(device_info['host'], brief_data, desc_data, mac_data)
+        combined_data = combine_data(device_info, brief_data, desc_data, mac_data)
 
         all_data.extend(combined_data)
 
