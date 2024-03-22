@@ -1,10 +1,9 @@
-import paramiko
 import pandas as pd
 import getpass
 import yaml
 import logging
 import re
-from paramiko import SSHClient, AutoAddPolicy
+from netmiko import ConnectHandler
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -14,17 +13,14 @@ def read_device_info(file_path='devices.yaml'):
         devices = yaml.safe_load(file)
     return devices.get('switches', [])
 
-def execute_command(host, username, password, command):
+def execute_command(device_info, command):
     try:
-        with SSHClient() as client:
-            client.set_missing_host_key_policy(AutoAddPolicy())
-            client.connect(hostname=host, username=username, password=password, timeout=10)
-            stdin, stdout, stderr = client.exec_command(command)
-            command_output = stdout.read().decode('utf-8').strip()
-            logging.debug(f"Command: {command}\nOutput:\n{command_output}\n")
-            return command_output
+        with ConnectHandler(**device_info) as ssh_conn:
+            output = ssh_conn.send_command(command)
+            logging.debug(f"Command: {command}\nOutput:\n{output}\n")
+            return output
     except Exception as e:
-        logging.error(f"Failed to execute command on {host}: {e}")
+        logging.error(f"Failed to execute command on {device_info['host']}: {e}")
         return ""
 
 def parse_show_interface_description(output):
@@ -77,7 +73,7 @@ def parse_show_mac_address_table(output):
             # Skip entries without a valid VLAN number
             if vlan == '-':
                 continue
-            mac_entries.setdefault(port, []).append((mac_address, vlan))
+            mac_entries.setdefault(port, []).append(mac_address)
     return mac_entries
 
 def combine_data(device, brief_data, desc_data, mac_data):
@@ -87,17 +83,16 @@ def combine_data(device, brief_data, desc_data, mac_data):
         name = desc_data.get(port, 'N/A')
         status = entry['Status']
         vlan = entry['VLAN']
-        mac_entries = mac_data.get(port, [('N/A', vlan)])
-        for mac_address, vlan in mac_entries:
-            combined_entry = {
-                'Device': device,
-                'Port': port,
-                'Name': name,
-                'Status': status,
-                'VLAN': vlan,
-                'MAC Address': mac_address,
-            }
-            combined_data.append(combined_entry)
+        mac_addresses = mac_data.get(port, ['N/A'])
+        combined_entry = {
+            'Device': device,
+            'Port': port,
+            'Name': name,
+            'Status': status,
+            'VLAN': vlan,
+            'MAC Address': ', '.join(mac_addresses)
+        }
+        combined_data.append(combined_entry)
     logging.debug(f"Combined data: {combined_data}")
     return combined_data
 
@@ -108,17 +103,17 @@ def main():
 
     all_data = []
 
-    for device_hostname in devices:
-        logging.info(f"Processing device: {device_hostname}")
-        desc_output = execute_command(device_hostname, username, password, "show int description")
-        brief_output = execute_command(device_hostname, username, password, "show interface brief")
-        mac_output = execute_command(device_hostname, username, password, "show mac address-table")
+    for device_info in devices:
+        logging.info(f"Processing device: {device_info['host']}")
+        desc_output = execute_command(device_info, "show int description")
+        brief_output = execute_command(device_info, "show interface brief")
+        mac_output = execute_command(device_info, "show mac address-table")
 
         desc_data = parse_show_interface_description(desc_output)
         brief_data = parse_show_interface_brief(brief_output)
         mac_data = parse_show_mac_address_table(mac_output)
 
-        combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
+        combined_data = combine_data(device_info['host'], brief_data, desc_data, mac_data)
 
         all_data.extend(combined_data)
 
