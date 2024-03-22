@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import argparse
 import csv
 import getpass
 import ipaddress
@@ -58,21 +57,15 @@ def trace_mac(mac, switch_ip, username, password, secret):
     return results
 
 def main():
-    # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="Trace MAC addresses on network switches.")
-    parser.add_argument('-n', '--network', help='The network to scan in CIDR format (e.g., 192.168.1.0/24)', required=True)
-    parser.add_argument('-c', '--config', help='YAML file containing switch IPs', required=True)
-    parser.add_argument('-u', '--username', help='Username for device login', required=True)
-    args = parser.parse_args()
-
-    # Prompt for password and secret
+    # Load switch IPs from YAML config file
+    with open('devices.yaml', 'r') as file:
+        switch_ips = yaml.safe_load(file)
+    
+    # Prompt for username, password, and secret
+    username = input("Enter username: ")
     password = getpass.getpass("Enter password: ")
     secret = getpass.getpass("Enter enable secret (if any): ")
 
-    # Load switch IPs from YAML config file
-    with open(args.config, 'r') as file:
-        switch_ips = yaml.safe_load(file)
-    
     # Open CSV file for writing
     with open('mac_addresses.csv', 'w', newline='') as csvfile:
         csv_writer = csv.writer(csvfile)
@@ -82,10 +75,10 @@ def main():
         for switch_ip in switch_ips['switches']:
             print(f"Scanning switch {switch_ip}...")
             # Iterate over each IP in the network and trace MAC address
-            for ip in ipaddress.IPv4Network(args.network):
+            for ip in ipaddress.IPv4Network(switch_ips['network']):
                 print(f"Tracing MAC for IP {ip}...")
                 # Trace MAC address through switches
-                results = trace_mac(str(ip), switch_ip, args.username, password, secret)
+                results = trace_mac(str(ip), switch_ip, username, password, secret)
                 # Write results to CSV
                 for result in results:
                     csv_writer.writerow(result)
