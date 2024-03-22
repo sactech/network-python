@@ -5,6 +5,7 @@ import yaml
 import logging
 from concurrent.futures import ThreadPoolExecutor
 import re
+import time
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -102,12 +103,11 @@ def main():
     password = getpass.getpass("Enter SSH password: ")
 
     all_data = []
-    concurrency_limit = 2
 
-    with ThreadPoolExecutor(max_workers=concurrency_limit) as executor:
-        futures = [executor.submit(process_device, device) for device in devices]
-        for future in futures:
-            all_data.extend(future.result())
+    for device in devices:
+        time.sleep(5)  # Introduce a delay before connecting to the next device
+        data = process_device(device)
+        all_data.extend(data)
 
     df = pd.DataFrame(all_data)
     df.to_csv('network_data_combined.csv', index=False)
