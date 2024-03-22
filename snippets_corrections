@@ -1,0 +1,29 @@
+def parse_show_interface_status(output):
+    status_entries = []
+    lines = output.splitlines()
+    for line in lines[2:]:  # Skip header lines
+        match = re.match(r'(\S+)\s+([\w\s\-\.\/]+)\s+(connected|notconnect|disabled|sfpAbsent|down)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)', line)
+        if match:
+            port, name, status, vlan, duplex, speed, type = match.groups()
+            status_entries.append({
+                'Port': port,
+                'Name': name.strip(),
+                'Status': status,
+                'Vlan': vlan,
+                'Duplex': duplex,
+                'Speed': speed,
+                'Type': type
+            })
+    return status_entries
+
+
+def parse_show_mac_address_table(output):
+    mac_entries = {}
+    lines = output.splitlines()
+    for line in lines:
+        match = re.match(r'^\*?\s+(\d+|-)\s+([0-9a-fA-F\.]+)\s+\w+\s+\d+\s+\w+\s+(\S+)', line)
+        if match:
+            vlan, mac_address, port = match.groups()
+            if vlan.isdigit():  # Check if VLAN is a valid number
+                mac_entries.setdefault(port, []).append(mac_address)
+    return mac_entries
