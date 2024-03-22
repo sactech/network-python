@@ -58,22 +58,18 @@ def parse_show_interface_brief(output):
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
+    # Adjusted regex to account for the output format, including handling the legend symbols and routed MAC indication
+    regex = re.compile(r'^(\*|G)?\s*(\d+|-)\s+([0-9a-fA-F\.]+)\s+(\S+)\s+[\-\d]+\s+\S+\s+\S+\s+(\S+)')
     lines = output.splitlines()
-    start_index = 0
-    for i, line in enumerate(lines):
-        if line.strip().startswith("VLAN"):
-            start_index = i + 1
-            break
-
-    regex = re.compile(r'^\S+\s+(\d+|\-)\s+([0-9a-fA-F\.]{14})\s+(\S+)\s+\S+\s+\S+\s+(\S+)')
-    for line in lines[start_index:]:
-        match = regex.search(line)
+    for line in lines:
+        match = regex.match(line)
         if match:
-            vlan, mac_address, _, port = match.groups()
-            if vlan == '-':
+            # Ignoring the first group (*) as it's not needed for data extraction
+            vlan, mac_address, _, port = match.groups()[1:]
+            # Skip entries without a valid VLAN number or the gateway entry
+            if vlan == '-' or vlan.isdigit() == False:
                 continue
             mac_entries.setdefault(port, []).append(mac_address)
-    logging.debug(f"Parsed MAC address data: {mac_entries}")
     return mac_entries
 
 def combine_data(device, brief_data, desc_data, mac_data):
