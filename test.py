@@ -19,7 +19,7 @@ def read_device_info(file_path='devices.yaml'):
 
 def execute_command(device_details, command):
     try:
-        with ConnectHandler(**device_details) as conn:  # Close connection automatically
+        with ConnectHandler(**device_details) as conn:
             output = conn.send_command(command)
         return output
     except Exception as e:
@@ -29,38 +29,46 @@ def execute_command(device_details, command):
 def parse_show_interface_brief(output):
     # Improved parsing for 'show interface brief'
     interface_data = []
-    lines = output.splitlines()
-    headers = lines[0].split()  # Assuming headers on the first line
-    for line in lines[1:]:  # Skip headers
+    lines = output.splitlines()[5:]  # Skip header lines
+    for line in lines:
         fields = line.split()
-        if len(fields) == len(headers):  # Ensure matching number of fields
-            interface_data.append(dict(zip(headers, fields)))
+        if len(fields) >= 6:
+            intf = fields[0]
+            status = fields[4]
+            interface_data.append({'intf': intf, 'Status': status})
     return interface_data
 
 def parse_show_interface_descriptions(output):
     # Simplified parsing assuming consistent format
     desc_data = {}
-    lines = output.splitlines()[2:]  # Assuming headers in the first two lines
+    lines = output.splitlines()[5:]  # Skip header lines
     for line in lines:
-        port, description = line.split(':', 1)  # Split by ':' assuming consistent format
-        desc_data[port.strip()] = description.strip()
+        fields = line.split()
+        if len(fields) >= 3:
+            port = fields[0]
+            description = ' '.join(fields[1:])
+            desc_data[port] = description
     return desc_data
 
 def parse_show_mac_address_table(output):
     # Existing parsing logic seems appropriate for 'show mac address-table'
     mac_entries = {}
-    lines = output.splitlines()
+    lines = output.splitlines()[2:]  # Skip header lines
     for line in lines:
-        if re.match(r'^\*', line):  # Assuming entries start with '*'
-            fields = line.split()
-            mac_entries.setdefault(fields[-1], []).append(fields[1])  # Assuming MAC address is the second field
+        fields = line.split()
+        if len(fields) >= 4:
+            vlan = fields[0]
+            mac_address = fields[1]
+            port = fields[-1]
+            mac_entries.setdefault(port, []).append(mac_address)
     return mac_entries
 
 def combine_data(device, interface_data, desc_data, mac_data):
     combined_data = []
     for entry in interface_data:
-        port = entry.get('Port', 'N/A')  # Use .get() method to avoid KeyError
-        combined_entry = entry.copy()
+        port = entry['intf']
+        combined_entry = {'Device': device, 'Port': port}
+        combined_entry['Status'] = entry.get('Status', 'N/A')
         combined_entry['Description'] = desc_data.get(port, 'N/A')
         combined_entry['MAC Addresses'] = ', '.join(mac_data.get(port, ['N/A']))
         combined_data.append(combined_entry)
