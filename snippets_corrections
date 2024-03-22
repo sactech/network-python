@@ -1,99 +1,99 @@
-import paramiko
+from netmiko import ConnectHandler
 import pandas as pd
 import getpass
 import yaml
-import logging
 import re
-from paramiko import SSHClient, AutoAddPolicy
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-def read_device_info(file_path='devices.yaml'):
-    with open(file_path) as file:
-        devices = yaml.safe_load(file)
-    return devices.get('switches', [])
-
-def execute_command(host, username, password, command):
-    try:
-        with SSHClient() as client:
-            client.set_missing_host_key_policy(AutoAddPolicy())
-            client.connect(hostname=host, username=username, password=password, timeout=10)
-            stdin, stdout, stderr = client.exec_command(command)
-            return stdout.read().decode('utf-8').strip()
-    except Exception as e:
-        logging.error(f"Failed to execute command on {host}: {e}")
-        return ""
-
-def parse_show_interface_description(output):
-    desc_entries = {}
-    regex = re.compile(r'^(?P<interface>mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+(?P<description>.*)')
+# Parsing functions
+def parse_mac_address_table(output):
+    """Parse the 'show mac address-table' output to collect MAC addresses."""
+    mac_data = {}
+    regex = re.compile(r'^\*\s+\d+\s+([\da-fA-F.]+)\s+\w+\s+\d+\s+\w+\s+\w+\s+(\S+)')
     for line in output.splitlines():
-        match = regex.search(line)
+        match = regex.search(line.strip())
         if match:
-            desc_entries[match.group('interface')] = match.group('description')
-    return desc_entries
+            mac_address, port = match.groups()
+            mac_data.setdefault(port, []).append(mac_address)
+    return mac_data
 
-def parse_show_interface_brief(output):
-    brief_entries = {}
-    regex = re.compile(r'^(?P<interface>mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+\d+\s+(?P<status>up|down|administratively down)\s+\d+\s+(?P<vlan>\d+|--)')
+def parse_interface_brief(output):
+    """Parse the 'show interface brief' output."""
+    brief_data = {}
+    regex = re.compile(r'^(Eth\d+/\d+)\s+(\d+|--)\s+\w+\s+\w+\s+(\w+)')
     for line in output.splitlines():
-        match = regex.search(line)
+        match = regex.search(line.strip())
         if match:
-            brief_entries[match.group('interface')] = {'status': match.group('status'), 'vlan': match.group('vlan')}
-    return brief_entries
+            interface, vlan, status = match.groups()
+            vlan = vlan if vlan != '--' else 'N/A'
+            brief_data[interface] = {'VLAN': vlan, 'Status': status}
+    return brief_data
 
-def parse_show_mac_address_table(output):
-    mac_entries = {}
-    regex = re.compile(r'(?P<vlan>\d+|\-)\s+(?P<mac>[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+\S+\s+\S+\s+(?P<port>\S+)')
+def parse_interface_description(output):
+    """Parse the 'show interface description' output."""
+    desc_data = {}
+    regex = re.compile(r'^(Eth\d+/\d+)\s+eth\s+\d+\s+(.*)$')
     for line in output.splitlines():
-        match = regex.search(line)
+        match = regex.search(line.strip())
         if match:
-            port = match.group('port')
-            if port not in mac_entries:
-                mac_entries[port] = []
-            mac_entries[port].append(match.group('mac'))
-    return mac_entries
+            interface, description = match.groups()
+            desc_data[interface] = description or 'N/A'
+    return desc_data
 
-def combine_data(device, brief_data, desc_data, mac_data):
-    combined_data = []
-    for interface, brief_info in brief_data.items():
-        entry = {
-            'Device': device,
-            'Interface': interface,
-            'Description': desc_data.get(interface, 'N/A'),
-            'Status': brief_info.get('status', 'N/A'),
-            'VLAN': brief_info.get('vlan', 'N/A'),
-            'MAC Addresses': ', '.join(mac_data.get(interface, ['N/A']))
-        }
-        combined_data.append(entry)
-    return combined_data
+# Device command execution and data collection
+def collect_data_from_device(device_info):
+    device_type = 'cisco_nxos'  # For Cisco Nexus devices
+    ssh_connection = ConnectHandler(device_type=device_type, **device_info)
+    collected_data = {
+        'mac_address_table': parse_mac_address_table(ssh_connection.send_command("show mac address-table")),
+        'interface_brief': parse_interface_brief(ssh_connection.send_command("show interface brief")),
+        'interface_description': parse_interface_description(ssh_connection.send_command("show interface description")),
+    }
+    ssh_connection.disconnect()
+    return collected_data
 
+# Main function
 def main():
-    devices = read_device_info()
+    devices_yaml = 'devices.yaml'
+    with open(devices_yaml) as file:
+        devices = yaml.safe_load(file).get('switches', [])
+
     username = input("Enter SSH username: ")
     password = getpass.getpass("Enter SSH password: ")
+
     all_data = []
-
-    for device in devices:
-        logging.info(f"Processing device: {device}")
-        desc_output = execute_command(device, username, password, "show interface description")
-        brief_output = execute_command(device, username, password, "show interface brief")
-        mac_output = execute_command(device, username, password, "show mac address-table")
-
-        desc_data = parse_show_interface_description(desc_output)
-        brief_data = parse_show_interface_brief(brief_output)
-        mac_data = parse_show_mac_address_table(mac_output)
-
-        combined_data = combine_data(device, brief_data, desc_data, mac_data)
-        all_data.extend(combined_data)
+    for device_ip in devices:
+        device_info = {
+            'host': device_ip,
+            'username': username,
+            'password': password,
+            'secret': password,  # Assuming enable password is the same
+        }
+        device_data = collect_data_from_device(device_info)
+        
+        # Data combination logic goes here
+        # This is a placeholder for how you might start combining your data.
+        # You will need to expand upon this to meet your exact requirements.
+        
+        for interface, macs in device_data['mac_address_table'].items():
+            for mac in macs:
+                brief_info = device_data['interface_brief'].get(interface, {})
+                desc_info = device_data['interface_description'].get(interface, 'N/A')
+                combined_entry = {
+                    'Device': device_ip,
+                    'Interface': interface,
+                    'Description': desc_info,
+                    'VLAN': brief_info.get('VLAN', 'N/A'),
+                    'Status': brief_info.get('Status', 'N/A'),
+                    'MAC Address': mac,
+                }
+                all_data.append(combined_entry)
 
     if all_data:
         df = pd.DataFrame(all_data)
         df.to_csv('network_data_combined.csv', index=False)
-        logging.info("Data successfully saved to 'network_data_combined.csv'.")
+        print("Data successfully saved to 'network_data_combined.csv'.")
     else:
-        logging.warning("No data collected.")
+        print("No data collected.")
 
 if __name__ == "__main__":
     main()
