@@ -125,9 +125,6 @@ def main():
     if all_data:
         df = pd.DataFrame.from_records(all_data)
         df.to_csv('network_data_combined.csv', index=False)
-        logging.info("Data successfully saved
-        df = pd.DataFrame.from_records(all_data)
-        df.to_csv('network_data_combined.csv', index=False)
         logging.info("Data successfully saved to network_data_combined.csv.")
     else:
         logging.warning("No data collected.")
