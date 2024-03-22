@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def read_device_info(file_path='devices.yaml'):
     with open(file_path) as file:
         devices = yaml.safe_load(file)
-    return devices.get('switches', [])
+    return devices.get('switches', [])  # Correctly targeting the 'switches' section
 
 def execute_command(device_info, command):
     try:
@@ -67,6 +67,7 @@ def parse_show_mac_address_table(output):
             if vlan == '-' or not vlan.isdigit():
                 continue
             mac_entries.setdefault(port, []).append(mac_address)
+    logging.debug(f"Parsed MAC address data: {mac_entries}")
     return mac_entries
 
 def combine_data(device, brief_data, desc_data, mac_data):
@@ -87,10 +88,15 @@ def combine_data(device, brief_data, desc_data, mac_data):
                 'MAC Address': mac_address
             }
             combined_data.append(combined_entry)
+    logging.debug(f"Combined data: {combined_data}")
     return combined_data
 
 def main():
     devices = read_device_info()
+    if not devices:  # Ensure there are devices to process
+        logging.error("No devices found. Check your YAML file.")
+        return
+
     username = input("Enter SSH username: ")
     password = getpass.getpass("Enter SSH password: ")
 
@@ -103,19 +109,28 @@ def main():
             'username': username,
             'password': password
         }
+
         logging.info(f"Processing device: {device_hostname}")
         desc_output = execute_command(device_info, "show interface description")
         brief_output = execute_command(device_info, "show interface brief")
-        mac_output = execute_command(device_info, "show mac address-table")
+        mac_output = execute_command(device_info, "show mac address-table
+        if desc_output and brief_output and mac_output:  # Ensure we have outputs to parse
+            desc_data = parse_show_interface_description(desc_output)
+            brief_data = parse_show_interface_brief(brief_output)
+            mac_data = parse_show_mac_address_table(mac_output)
 
-        desc_data = parse_show_interface_description(desc_output)
-        brief_data = parse_show_interface_brief(brief_output)
-        mac_data = parse_show_mac_address_table(mac_output)
+            combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
+            all_data.extend(combined_data)
+        else:
+            logging.warning(f"Could not retrieve data for device: {device_hostname}")
 
-        combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
-        all_data.extend(combined_data)
-
+    # After processing all devices, check if we have data to write to CSV
     if all_data:
         df = pd.DataFrame.from_records(all_data)
         df.to_csv('network_data_combined.csv', index=False)
         logging.info("Data successfully saved to network_data_combined.csv.")
+    else:
+        logging.warning("No data collected. Check device connectivity and command outputs.")
+
+if __name__ == "__main__":
+    main()
