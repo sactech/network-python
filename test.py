@@ -13,14 +13,13 @@ def read_device_info(file_path='devices.yaml'):
         devices = yaml.safe_load(file)
     return devices.get('switches', [])
 
-def execute_command(device_info, command):
+def execute_command(ssh_conn, command):
     try:
-        with ConnectHandler(**device_info) as ssh:
-            command_output = ssh.send_command(command)
-            logging.debug(f"Command: {command}\nOutput:\n{command_output}\n")
-            return command_output
+        output = ssh_conn.send_command(command)
+        logging.debug(f"Command: {command}\nOutput:\n{output}\n")
+        return output
     except Exception as e:
-        logging.error(f"Failed to execute command on {device_info['host']}: {e}")
+        logging.error(f"Failed to execute command: {e}")
         return ""
 
 def parse_show_interface_description(output):
@@ -76,7 +75,7 @@ def parse_show_mac_address_table(output):
             mac_entries.setdefault(port, []).append(mac_address)
     return mac_entries
 
-def combine_data(device_info, brief_data, desc_data, mac_data):
+def combine_data(device, brief_data, desc_data, mac_data):
     combined_data = []
     for entry in brief_data:
         port = entry['Port']
@@ -85,7 +84,7 @@ def combine_data(device_info, brief_data, desc_data, mac_data):
         vlan = entry['VLAN']
         mac_addresses = mac_data.get(port, ['N/A'])
         combined_entry = {
-            'Device': device_info['host'],
+            'Device': device,
             'Port': port,
             'Name': name,
             'Status': status,
@@ -103,21 +102,30 @@ def main():
 
     all_data = []
 
-    for device_info in devices:
-        logging.info(f"Processing device: {device_info['host']}")
-        desc_output = execute_command(device_info, "show int description")
-        brief_output = execute_command(device_info, "show interface brief")
-        mac_output = execute_command(device_info, "show mac address-table")
+    for device_hostname in devices:
+        logging.info(f"Processing device: {device_hostname}")
+        try:
+            ssh_conn = ConnectHandler(device_type='cisco_ios', host=device_hostname, username=username, password=password)
+            desc_output = execute_command(ssh_conn, "show int description")
+            brief_output = execute_command(ssh_conn, "show interface brief")
+            mac_output = execute_command(ssh_conn, "show mac address-table")
+            ssh_conn.disconnect()
+        except Exception as e:
+            logging.error(f"Failed to connect to device {device_hostname}: {e}")
+            continue
 
         desc_data = parse_show_interface_description(desc_output)
         brief_data = parse_show_interface_brief(brief_output)
         mac_data = parse_show_mac_address_table(mac_output)
 
-        combined_data = combine_data(device_info, brief_data, desc_data, mac_data)
+        combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
 
         all_data.extend(combined_data)
 
     if all_data:
+        df = pd.DataFrame.from_records(all_data)
+        df.to_csv('network_data_combined.csv', index=False)
+        logging.info("Data successfully saved
         df = pd.DataFrame.from_records(all_data)
         df.to_csv('network_data_combined.csv', index=False)
         logging.info("Data successfully saved to network_data_combined.csv.")
