@@ -1,117 +1,96 @@
-from netmiko import ConnectHandler
-import pandas as pd
+#!/usr/bin/env python
+
+import argparse
+import csv
 import getpass
-import yaml
-import logging
-from concurrent.futures import ThreadPoolExecutor
+import ipaddress
 import re
-import time
+from netmiko import ConnectHandler
+from socket import gethostbyaddr
+import yaml
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# CSV header
+csv_header = ["Device", "Port", "Interface Description", "Status", "VLAN", "MAC Address"]
 
-def read_device_info(file_path='devices.yaml'):
-    try:
-        with open(file_path) as file:
-            devices = yaml.safe_load(file)
-        return devices.get('switches', [])
-    except (FileNotFoundError, yaml.YAMLError) as e:
-        logging.error(f"Failed to read device info: {e}")
-        return []
+# Global regex patterns
+description_regex = re.compile(r'Description: (.*)', re.MULTILINE)
+status_regex = re.compile(r'line protocol is (\S+)')
 
-def execute_commands(device_details, commands):
-    try:
-        with ConnectHandler(**device_details) as conn:
-            outputs = [conn.send_command(command) for command in commands]
-        return outputs
-    except Exception as e:
-        logging.error(f"Failed to execute commands: {e}")
-        return [""] * len(commands)
-
-def parse_show_interface_brief(output):
-    interface_data = []
-    lines = output.splitlines()
-    headers = lines[1].split()  # Assuming headers are in the second line
-    for line in lines[2:]:  # Skip headers and separator lines
-        fields = line.split()
-        if len(fields) == len(headers):  # Ensure matching number of fields
-            interface_data.append(dict(zip(headers, fields)))
+def parse_interface_data(interface_output):
+    """Parse interface data from show interface command."""
+    interface_data = {}
+    # Parse interface description
+    description_match = re.search(description_regex, interface_output)
+    if description_match:
+        interface_data['description'] = description_match.group(1)
+    else:
+        interface_data['description'] = 'N/A'
+    # Parse interface status
+    status_match = re.search(status_regex, interface_output)
+    if status_match:
+        interface_data['status'] = status_match.group(1)
+    else:
+        interface_data['status'] = 'N/A'
     return interface_data
 
-def parse_show_interface_descriptions(output):
-    desc_data = {}
-    lines = output.splitlines()[3:]  # Skip headers and separators
-    for line in lines:
-        if len(line.strip()) == 0:
-            continue
-        port, description = line.split(maxsplit=1)  # Split by first space
-        desc_data[port.strip()] = description.strip()
-    return desc_data
-
-def parse_show_mac_address_table(output):
-    mac_entries = {}
-    lines = output.splitlines()
-    for line in lines:
-        match = re.match(r'^\*?(\d+)\s+([0-9a-fA-F\.]+)\s+\w+\s+\d+\s+\w+\s+(\S+)', line)
-        if match:
-            vlan, mac_address, port = match.groups()
-            mac_entries.setdefault(port, []).append(mac_address)
-    return mac_entries
-
-def combine_data(device, interface_data, desc_data, mac_data):
-    combined_data = []
-    for entry in interface_data:
-        port = entry['Port']
-        combined_entry = {
-            'Device': device,
-            'Port': port,
-            'Status': entry.get('Status', 'N/A'),
-            'Description': desc_data.get(port, 'N/A'),
-            'MAC Addresses': ', '.join(mac_data.get(port, ['N/A']))
-        }
-        combined_data.append(combined_entry)
-    return combined_data
-
-def process_device(device):
+def trace_mac(mac, switch_ip, username, password, secret):
+    """Trace MAC address through switches."""
+    results = []
+    device = {
+        'device_type': 'cisco_ios',
+        'host': switch_ip,
+        'username': username,
+        'password': password,
+        'secret': secret
+    }
     try:
-        device_details = {
-            'device_type': 'cisco_nxos',
-            'host': device,
-            'username': username,
-            'password': password,
-            'secret': password,  # Assuming enable password is the same
-        }
-        commands = ["show interface brief", "show interface description", "show mac address-table"]
-        outputs = execute_commands(device_details, commands)
-        interface_data = parse_show_interface_brief(outputs[0])
-        desc_data = parse_show_interface_descriptions(outputs[1])
-        mac_data = parse_show_mac_address_table(outputs[2])
-        return combine_data(device, interface_data, desc_data, mac_data)
+        with ConnectHandler(**device) as net_connect:
+            # Execute commands to gather interface information
+            command = f"show mac address-table address {mac}"
+            output = net_connect.send_command(command)
+            # Parse interface data from output
+            interface_data = parse_interface_data(output)
+            # Append device name, MAC address, and parsed interface data to results
+            results.append([net_connect.find_prompt().strip('#'), 'N/A', interface_data['description'], 
+                            interface_data['status'], 'N/A', mac])
     except Exception as e:
-        logging.error(f"Error processing device {device}: {e}")
-        return []
+        print(f"Error connecting to switch {switch_ip}: {str(e)}")
+    return results
 
 def main():
-    devices = read_device_info()
-    if len(devices) == 0:
-        logging.error("No devices found in the configuration file.")
-        return
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Trace MAC addresses on network switches.")
+    parser.add_argument('-n', '--network', help='The network to scan in CIDR format (e.g., 192.168.1.0/24)', required=True)
+    parser.add_argument('-c', '--config', help='YAML file containing switch IPs', required=True)
+    parser.add_argument('-u', '--username', help='Username for device login', required=True)
+    args = parser.parse_args()
 
-    global username
-    username = input("Enter SSH username: ")
-    global password
-    password = getpass.getpass("Enter SSH password: ")
+    # Prompt for password and secret
+    password = getpass.getpass("Enter password: ")
+    secret = getpass.getpass("Enter enable secret (if any): ")
 
-    all_data = []
+    # Load switch IPs from YAML config file
+    with open(args.config, 'r') as file:
+        switch_ips = yaml.safe_load(file)
+    
+    # Open CSV file for writing
+    with open('mac_addresses.csv', 'w', newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        csv_writer.writerow(csv_header)
 
-    for device in devices:
-        time.sleep(5)  # Introduce a delay before connecting to the next device
-        data = process_device(device)
-        all_data.extend(data)
+        # Iterate over each switch IP
+        for switch_ip in switch_ips['switches']:
+            print(f"Scanning switch {switch_ip}...")
+            # Iterate over each IP in the network and trace MAC address
+            for ip in ipaddress.IPv4Network(args.network):
+                print(f"Tracing MAC for IP {ip}...")
+                # Trace MAC address through switches
+                results = trace_mac(str(ip), switch_ip, args.username, password, secret)
+                # Write results to CSV
+                for result in results:
+                    csv_writer.writerow(result)
 
-    df = pd.DataFrame(all_data)
-    df.to_csv('network_data_combined.csv', index=False)
-    logging.info("Data successfully saved to network_data_combined.csv.")
+    print("Scan complete.")
 
 if __name__ == "__main__":
     main()
