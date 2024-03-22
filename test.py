@@ -75,7 +75,7 @@ def main():
 
     for device in devices:
         device_details = {
-            'device_type': 'cisco_ios',  # or 'cisco_nxos' for Nexus devices
+            'device_type': 'cisco_nxos',  # or 'cisco_nxos' for Nexus devices
             'host': device,
             'username': username,
             'password': password,
