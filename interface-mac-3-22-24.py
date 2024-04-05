@@ -19,78 +19,61 @@ def execute_command(device_info, command):
         with ConnectHandler(**device_info) as ssh:
             output = ssh.send_command(command)
             logging.debug(f"Command: {command}\nOutput:\n{output}")
-            return output
+            return output.strip()
     except Exception as e:
         logging.error(f"Failed to execute command on {device_info['host']}: {e}")
         return ""
 
 def parse_show_interface_description(output):
     desc_entries = {}
-    lines = output.splitlines()
-    for line in lines:
+    for line in output.splitlines():
         match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+(.*)', line)
         if match:
             interface, description = match.groups()
             desc_entries[interface.strip()] = description.strip()
-    logging.debug(f"Parsed description data: {desc_entries}")
     return desc_entries
 
 def parse_show_interface_brief(output):
-    brief_entries = []
-    lines = output.splitlines()
-    start_parsing = False
-    for line in lines:
-        if '-----' in line:
-            start_parsing = True
-            continue
-        if start_parsing:
-            match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+(\d+|--)\s+(\S*)\s+(\S*)\s+(\S+).*', line)
-            if match:
-                interface, vlan, _, _, status = match.groups()
-                vlan = 'N/A' if vlan == '--' else vlan
-                brief_entries.append({
-                    'Port': interface,
-                    'VLAN': vlan,
-                    'Status': status,
-                })
-    logging.debug(f"Parsed brief data: {brief_entries}")
+    brief_entries = {}
+    for line in output.splitlines():
+        match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+\S+\s+(\S+)\s+\S+\s+\S+', line)
+        if match:
+            interface, status = match.groups()
+            brief_entries[interface] = {'Status': status}
     return brief_entries
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
-    # Adjusted regex to account for the output format, including handling the legend symbols and routed MAC indication
-    regex = re.compile(r'^(\*|G)?\s*(\d+|-)\s+([0-9a-fA-F\.]+)\s+(\S+)\s+[\-\d]+\s+\S+\s+\S+\s+(\S+)')
-    lines = output.splitlines()
-    for line in lines:
-        match = regex.match(line)
+    for line in output.splitlines():
+        match = re.match(r'^\*\s+\S+\s+([0-9a-fA-F.:]+)\s+\S+\s+(\S+)', line)
         if match:
-            # Ignoring the first group (*) as it's not needed for data extraction
-            vlan, mac_address, _, port = match.groups()[1:]
-            # Skip entries without a valid VLAN number or the gateway entry
-            if vlan == '-' or vlan.isdigit() == False:
-                continue
+            mac_address, port = match.groups()
             mac_entries.setdefault(port, []).append(mac_address)
     return mac_entries
 
-def combine_data(device, brief_data, desc_data, mac_data):
+def parse_show_arp(output):
+    arp_entries = {}
+    for line in output.splitlines():
+        match = re.match(r'(\d{1,3}(?:\.\d{1,3}){3})\s+[\d\w]+\s+([0-9a-fA-F.:]+)\s+\S+\s+\S+', line)
+        if match:
+            ip_address, mac_address = match.groups()
+            arp_entries[mac_address.lower()] = ip_address
+    return arp_entries
+
+def combine_data(device, brief_data, desc_data, mac_data, arp_data=None):
     combined_data = []
-    for entry in brief_data:
-        port = entry['Port']
-        name = desc_data.get(port, 'N/A')
-        status = entry['Status']
-        vlan = entry['VLAN']
+    for port, details in brief_data.items():
         mac_addresses = mac_data.get(port, ['N/A'])
-        for mac_address in mac_addresses:
-            combined_entry = {
-                'Device': device,
-                'Port': port,
-                'Name': name,
-                'Status': status,
-                'VLAN': vlan,
-                'MAC Address': mac_address
-            }
-            combined_data.append(combined_entry)
-    logging.debug(f"Combined data: {combined_data}")
+        ip_addresses = [arp_data.get(mac.lower(), 'N/A') for mac in mac_addresses]
+        combined_entry = {
+            'Device': device,
+            'Port': port,
+            'Description': desc_data.get(port, 'No description'),
+            'Status': details['Status'],
+            'MAC Address': ', '.join(mac_addresses),
+            'IP Address': ', '.join(ip_addresses)
+        }
+        combined_data.append(combined_entry)
     return combined_data
 
 def main():
@@ -100,28 +83,31 @@ def main():
 
     all_data = []
 
-    for device_hostname in devices['switches']:
-        device_info = {
-            'device_type': 'cisco_nxos',  # Specific to Cisco NX-OS devices
-            'host': device_hostname,
-            'username': username,
-            'password': password
-        }
-        logging.info(f"Processing device: {device_hostname}")
-        desc_output = execute_command(device_info, "show interface description")
-        brief_output = execute_command(device_info, "show interface brief")
-        mac_output = execute_command(device_info, "show mac address-table")
+    for device_category in devices:  # Iterating over both switches and routers
+        for device_hostname in devices[device_category]:
+            device_info = {
+                'device_type': 'cisco_ios' if device_category == 'routers' else 'cisco_nxos',
+                'host': device_hostname,
+                'username': username,
+                'password': password,
+            }
+            
+            logging.info(f"Processing {device_category}: {device_hostname}")
+            desc_output = execute_command(device_info, "show interface description")
+            brief_output = execute_command(device_info, "show interface brief")
+            mac_output = execute_command(device_info, "show mac address-table")
+            arp_output = execute_command(device_info, "show ip arp") if device_category == 'switches' else execute_command(device_info, "show ip arp vrf all")
 
-        desc_data = parse_show_interface_description(desc_output)
-                brief_data = parse_show_interface_brief(brief_output)
-        mac_data = parse_show_mac_address_table(mac_output)
+            desc_data = parse_show_interface_description(desc_output)
+            brief_data = parse_show_interface_brief(brief_output)
+            mac_data = parse_show_mac_address_table(mac_output)
+            arp_data = parse_show_arp(arp_output) if arp_output else {}
 
-        combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
-
-        all_data.extend(combined_data)
+            combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data, arp_data)
+            all_data.extend(combined_data)
 
     if all_data:
-        df = pd.DataFrame.from_records(all_data)
+        df = pd.DataFrame(all_data)
         df.to_csv('network_data_combined.csv', index=False)
         logging.info("Data successfully saved to network_data_combined.csv.")
     else:
