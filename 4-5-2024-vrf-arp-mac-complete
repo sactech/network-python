@@ -1,0 +1,119 @@
+import pandas as pd
+import getpass
+import yaml
+import logging
+import re
+from netmiko import ConnectHandler
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def read_device_info(file_path='devices.yaml'):
+    with open(file_path) as file:
+        devices = yaml.safe_load(file)
+    return devices
+
+def execute_command(device_info, command):
+    try:
+        logging.info(f"Connecting to device: {device_info['host']}")
+        with ConnectHandler(**device_info) as ssh:
+            return ssh.send_command(command)
+    except Exception as e:
+        logging.error(f"Failed to execute command on {device_info['host']}: {e}")
+        return ""
+
+def parse_show_interface_description(output):
+    desc_entries = {}
+    for line in output.splitlines():
+        match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+(.*)', line)
+        if match:
+            interface, description = match.groups()
+            desc_entries[interface.strip()] = description.strip()
+    return desc_entries
+
+def parse_show_interface_brief(output):
+    brief_entries = {}
+    for line in output.splitlines():
+        match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+\d+\s+(\S+)\s+\S+\s+\S+', line)
+        if match:
+            interface, status = match.groups()
+            brief_entries[interface] = {'Status': status}
+    return brief_entries
+
+def parse_show_mac_address_table(output):
+    mac_entries = {}
+    regex = re.compile(r'^\S+\s+(\S+)\s+dynamic\s+\S+\s+\S+\s+(\S+)')
+    for line in output.splitlines():
+        match = regex.match(line)
+        if match:
+            mac_address, port = match.groups()
+            mac_entries.setdefault(port, []).append(mac_address)
+    return mac_entries
+
+def parse_show_arp_vrf_all(output):
+    arp_entries = {}
+    for line in output.splitlines():
+        match = re.match(r'\S+\s+(\d{1,3}(?:\.\d{1,3}){3})\s+\S+\s+([0-9a-fA-F.:]+)\s+\S+', line)
+        if match:
+            ip_address, mac_address = match.groups()
+            arp_entries[mac_address.lower()] = ip_address
+    return arp_entries
+
+def combine_data(device, desc_data, brief_data, mac_data, arp_data):
+    combined_data = []
+    for port, macs in mac_data.items():
+        for mac in macs:
+            ip = arp_data.get(mac, "N/A")
+            description = desc_data.get(port, 'No description')
+            status = brief_data.get(port, {'Status': 'Unknown'})['Status']
+            combined_entry = {
+                'Device': device,
+                'Port': port,
+                'Description': description,
+                'Status': status,
+                'MAC Address': mac,
+                'IP Address': ip
+            }
+            combined_data.append(combined_entry)
+    return combined_data
+
+def main():
+    devices = read_device_info()
+    switches = devices.get('switches', [])
+    routers = devices.get('routers', [])
+
+    username = input("Enter SSH username: ")
+    password = getpass.getpass("Enter SSH password: ")
+
+    all_data = []
+
+    device_info_common = {
+        'username': username,
+        'password': password,
+        'secret': password,  # If needed
+    }
+
+    for device in switches + routers:
+        device_info = {**device_info_common, 'host': device, 'device_type': 'cisco_nxos' if device in switches else 'cisco_ios'}
+        desc_output = execute_command(device_info, "show interface description")
+        brief_output = execute_command(device_info, "show interface brief")
+        mac_output = execute_command(device_info, "show mac address-table")
+        arp_output = execute_command(device_info, "show ip arp vrf all")
+
+        desc_data = parse_show_interface_description(desc_output)
+        brief_data = parse_show_interface_brief(brief_output)
+        mac_data = parse_show_mac_address_table(mac_output)
+        arp_data = parse_show_arp_vrf_all(arp_output)
+
+        combined_data = combine_data(device, desc_data, brief_data, mac_data, arp_data)
+        all_data.extend(combined_data)
+
+    if all_data:
+        df = pd.DataFrame(all_data)
+        df.to_csv('network_data_combined.csv', index=False)
+        logging.info("Data successfully saved to network_data_combined.csv.")
+    else:
+        logging.warning("No data collected. Check device connectivity and command outputs.")
+
+if __name__ == "__main__":
+    main()
