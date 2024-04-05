@@ -34,7 +34,7 @@ def parse_show_interface_description(output):
 def parse_show_interface_brief(output):
     brief_entries = {}
     for line in output.splitlines():
-        match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+\d+\s+(\S+)\s+\S+\s+\S+', line)
+        match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+\S+\s+(\S+)\s+\S+\s+\S+', line)
         if match:
             interface, status = match.groups()
             brief_entries[interface] = {'Status': status}
@@ -42,9 +42,8 @@ def parse_show_interface_brief(output):
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
-    regex = re.compile(r'^\S+\s+(\S+)\s+dynamic\s+\S+\s+\S+\s+(\S+)')
     for line in output.splitlines():
-        match = regex.match(line)
+        match = re.match(r'^\*\s+\S+\s+([0-9a-fA-F.:]+)\s+\S+\s+(\S+)', line)
         if match:
             mac_address, port = match.groups()
             mac_entries.setdefault(port, []).append(mac_address)
@@ -61,52 +60,49 @@ def parse_show_arp_vrf_all(output):
 
 def combine_data(device, desc_data, brief_data, mac_data, arp_data):
     combined_data = []
-    for port, macs in mac_data.items():
-        for mac in macs:
-            ip = arp_data.get(mac, "N/A")
-            description = desc_data.get(port, 'No description')
-            status = brief_data.get(port, {'Status': 'Unknown'})['Status']
-            combined_entry = {
-                'Device': device,
-                'Port': port,
-                'Description': description,
-                'Status': status,
-                'MAC Address': mac,
-                'IP Address': ip
-            }
-            combined_data.append(combined_entry)
+    for port, details in brief_data.items():
+        mac_addresses = mac_data.get(port, ['N/A'])
+        ip_addresses = [arp_data.get(mac.lower(), 'N/A') for mac in mac_addresses]
+        combined_entry = {
+            'Device': device,
+            'Port': port,
+            'Description': desc_data.get(port, 'No description'),
+            'Status': details['Status'],
+            'MAC Address': ', '.join(mac_addresses),
+            'IP Address': ', '.join(ip_addresses)
+        }
+        combined_data.append(combined_entry)
     return combined_data
 
 def main():
     devices = read_device_info()
-    switches = devices.get('switches', [])
-    routers = devices.get('routers', [])
-
     username = input("Enter SSH username: ")
     password = getpass.getpass("Enter SSH password: ")
 
     all_data = []
 
-    device_info_common = {
-        'username': username,
-        'password': password,
-        'secret': password,  # If needed
-    }
+    for device_type, device_list in devices.items():
+        for device_hostname in device_list:
+            device_info = {
+                'device_type': 'cisco_ios' if device_type == 'routers' else 'cisco_nxos',
+                'host': device_hostname,
+                'username': username,
+                'password': password,
+            }
 
-    for device in switches + routers:
-        device_info = {**device_info_common, 'host': device, 'device_type': 'cisco_nxos' if device in switches else 'cisco_ios'}
-        desc_output = execute_command(device_info, "show interface description")
-        brief_output = execute_command(device_info, "show interface brief")
-        mac_output = execute_command(device_info, "show mac address-table")
-        arp_output = execute_command(device_info, "show ip arp vrf all")
+            logging.info(f"Processing {device_type}: {device_hostname}")
+            desc_output = execute_command(device_info, "show interface description")
+            brief_output = execute_command(device_info, "show interface brief")
+            mac_output = execute_command(device_info, "show mac address-table")
+            arp_output = execute_command(device_info, "show ip arp vrf all")
 
-        desc_data = parse_show_interface_description(desc_output)
-        brief_data = parse_show_interface_brief(brief_output)
-        mac_data = parse_show_mac_address_table(mac_output)
-        arp_data = parse_show_arp_vrf_all(arp_output)
+            desc_data = parse_show_interface_description(desc_output)
+            brief_data = parse_show_interface_brief(brief_output)
+            mac_data = parse_show_mac_address_table(mac_output)
+            arp_data = parse_show_arp_vrf_all(arp_output)
 
-        combined_data = combine_data(device, desc_data, brief_data, mac_data, arp_data)
-        all_data.extend(combined_data)
+            combined_data = combine_data(device_hostname, desc_data, brief_data, mac_data, arp_data)
+            all_data.extend(combined_data)
 
     if all_data:
         df = pd.DataFrame(all_data)
