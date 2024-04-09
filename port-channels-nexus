@@ -16,16 +16,20 @@ password = getpass.getpass("Enter your SSH password: ")
 command = "show port-channel summary"
 
 # Function to process the output and return a row of data
-def process_output(output, switch_name):
-    lines = output.splitlines()
+def process_output(output):
     data_rows = []
-    for line in lines:
-        if 'Po' in line and not line.strip().startswith("Group"):  # Adjust this as necessary based on actual output
+    current_row = []
+    for line in output.splitlines():
+        if 'Po' in line and not line.strip().startswith(("Group", "-----")):  # Filter header and divider lines
             elements = line.split()
-            port_channel = elements[1]
-            member_ports = elements[4:]  # Assuming member ports start at index 4
-            row = [switch_name, port_channel] + member_ports
-            data_rows.append(row)
+            if elements[0].startswith('Po'):  # New port-channel entry
+                if current_row:  # If there is a current_row, it means it's complete and can be added to data_rows
+                    data_rows.append(current_row)
+                current_row = [elements[1]] + elements[4:]  # Start new row with port-channel and member ports
+            else:  # Continuation of the current port-channel entry
+                current_row.extend(elements)
+    if current_row:  # Add the last row if it exists
+        data_rows.append(current_row)
     return data_rows
 
 # Initialize a list to hold data for the Excel file
@@ -47,7 +51,8 @@ for switch in switches:
         print(f"Connecting to {switch}...")
         with ConnectHandler(**device) as conn:
             output = conn.send_command(command)
-            rows = process_output(output, switch)
+            rows = process_output(output)
+            rows = [[switch] + row for row in rows]  # Prepend switch name to each row
             excel_data.extend(rows)
             # Update max_ports if current rows have more member ports
             for row in rows:
