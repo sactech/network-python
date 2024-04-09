@@ -18,25 +18,28 @@ command = "show port-channel summary"
 # Function to process the output and return a row of data
 def process_output(output):
     data_rows = []
-    current_row = []
+    current_port_channel = None
     for line in output.splitlines():
-        if 'Po' in line and not line.strip().startswith(("Group", "-----")):  # Filter header and divider lines
+        # Ignore lines that do not contain relevant data
+        if line.strip().startswith(('Group', '-----', 'Flags:', '')):
+            continue
+        # Check for port-channel lines
+        elif line.startswith('Po'):
             elements = line.split()
-            if elements[0].startswith('Po'):  # New port-channel entry
-                if current_row:  # If there is a current_row, it means it's complete and can be added to data_rows
-                    data_rows.append(current_row)
-                current_row = [elements[1]] + elements[4:]  # Start new row with port-channel and member ports
-            else:  # Continuation of the current port-channel entry
-                current_row.extend(elements)
-    if current_row:  # Add the last row if it exists
-        data_rows.append(current_row)
+            current_port_channel = elements[0]  # Keep track of the current port-channel
+            # Get member ports, considering they might be on the same line
+            member_ports = elements[4:]  # The member ports start at index 4
+            data_rows.append([current_port_channel] + member_ports)
+        # Handle wrapped lines containing only member ports
+        elif line.strip() and current_port_channel:
+            # This assumes a wrapped line contains only a single member port
+            wrapped_port = line.strip()
+            # Append the wrapped port to the last entry in data_rows
+            data_rows[-1].append(wrapped_port)
     return data_rows
 
 # Initialize a list to hold data for the Excel file
 excel_data = []
-
-# Max number of member ports found, used to determine the number of columns
-max_ports = 0
 
 # Iterate over each switch and gather data
 for switch in switches:
@@ -52,11 +55,9 @@ for switch in switches:
         with ConnectHandler(**device) as conn:
             output = conn.send_command(command)
             rows = process_output(output)
-            rows = [[switch] + row for row in rows]  # Prepend switch name to each row
-            excel_data.extend(rows)
-            # Update max_ports if current rows have more member ports
+            # Prepend switch name to each row
             for row in rows:
-                max_ports = max(max_ports, len(row) - 2)  # Subtracting Device Name and Port-Channel columns
+                excel_data.append([switch] + row)
     except NetmikoTimeoutException:
         print(f"Connection timed out for {switch}. The device might be unreachable or offline.")
     except NetmikoAuthenticationException:
@@ -64,7 +65,10 @@ for switch in switches:
     except Exception as e:
         print(f"An unexpected error occurred with {switch}: {e}")
 
-# Construct the DataFrame
+# Determine the max number of member ports to set the column headers
+max_ports = max(len(row) - 2 for row in excel_data)  # Subtracting Switch Name and Port-Channel
+
+# Construct the DataFrame with the appropriate number of columns
 column_headers = ['Device Name', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports + 1)]
 df = pd.DataFrame(excel_data, columns=column_headers)
 
