@@ -1,0 +1,48 @@
+import pandas as pd
+import getpass
+import yaml
+from netmiko import ConnectHandler
+
+# Load switch details from devices.yaml
+with open("devices.yaml", "r") as file:
+    data = yaml.safe_load(file)
+switches = data.get("switches", [])
+
+# Prompt for credentials
+username = input("Enter your SSH username: ")
+password = getpass.getpass("Enter your SSH password: ")
+
+# Command to execute
+command = "show port-channel summary"
+
+# Initialize a list to hold data for the Excel file
+excel_data = []
+
+# Iterate over each switch and gather data
+for switch in switches:
+    device = {
+        "device_type": "cisco_nxos",
+        "host": switch,
+        "username": username,
+        "password": password,
+    }
+    try:
+        print(f"Connecting to {switch}...")
+        with ConnectHandler(**device) as conn:
+            output = conn.send_command(command)
+            # Assuming the port-channel and member ports are always in the expected positions in the output
+            for line in output.splitlines():
+                if 'Po' in line and not line.strip().startswith("Group"):  # Filter out non-data lines
+                    parts = line.split()
+                    port_channel = parts[1]  # Port-channel identifier
+                    member_ports = ' '.join(parts[-2:])  # Assuming the last two elements are the member ports
+                    # Adjust parsing logic here based on the actual output format
+                    excel_data.append([switch, port_channel, *member_ports.split()])
+    except Exception as e:
+        print(f"Error connecting to {switch}: {e}")
+
+# Convert the list to a DataFrame and create an Excel file
+df = pd.DataFrame(excel_data, columns=['Device Name', 'Port-Channel', 'Member Port 1', 'Member Port 2'])
+df.to_excel("switch_port_channels.xlsx", index=False)
+
+print("Script completed. Check 'switch_port_channels.xlsx' for the output.")
