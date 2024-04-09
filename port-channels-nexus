@@ -1,7 +1,7 @@
 import pandas as pd
 import getpass
 import yaml
-from netmiko import ConnectHandler
+from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
 
 # Load switch details from devices.yaml
 with open("devices.yaml", "r") as file:
@@ -25,21 +25,25 @@ for switch in switches:
         "host": switch,
         "username": username,
         "password": password,
+        "conn_timeout": 10,  # Connection timeout in seconds
     }
     try:
         print(f"Connecting to {switch}...")
         with ConnectHandler(**device) as conn:
             output = conn.send_command(command)
-            # Assuming the port-channel and member ports are always in the expected positions in the output
+            # Process command output here...
             for line in output.splitlines():
                 if 'Po' in line and not line.strip().startswith("Group"):  # Filter out non-data lines
                     parts = line.split()
                     port_channel = parts[1]  # Port-channel identifier
-                    member_ports = ' '.join(parts[-2:])  # Assuming the last two elements are the member ports
-                    # Adjust parsing logic here based on the actual output format
+                    member_ports = ' '.join(parts[-2:])  # Last two elements assumed to be member ports
                     excel_data.append([switch, port_channel, *member_ports.split()])
+    except NetmikoTimeoutException:
+        print(f"Connection timed out for {switch}. The device might be unreachable or offline.")
+    except NetmikoAuthenticationException:
+        print(f"Authentication failed for {switch}. Check the username/password.")
     except Exception as e:
-        print(f"Error connecting to {switch}: {e}")
+        print(f"An unexpected error occurred with {switch}: {e}")
 
 # Convert the list to a DataFrame and create an Excel file
 df = pd.DataFrame(excel_data, columns=['Device Name', 'Port-Channel', 'Member Port 1', 'Member Port 2'])
