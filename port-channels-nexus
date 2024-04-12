@@ -5,28 +5,26 @@ from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticati
 
 def process_output(output):
     data_rows = []
-    current_row = []
+    current_row = []  # To store current port-channel and its ports
 
     for line in output.splitlines():
         line = line.strip()
         if '---' in line or line.startswith(('Flags:', 'Group Port-', '')):
             continue  # Skip header and irrelevant lines
         
-        if line.startswith('Po'):
-            if current_row:  # If there is an ongoing row, append it before starting a new one
+        if line.startswith('Po'):  # This indicates the start of a new port-channel
+            if current_row:  # If there's an ongoing row, append it before starting a new one
                 data_rows.append(current_row)
             parts = line.split()
             port_channel = parts[0]
-            if len(parts) > 4:  # Assuming that the line contains member ports
-                member_ports = parts[4:]  # Extracting member ports
-            else:
-                member_ports = []
+            # Sometimes member ports may not be immediately after port-channel info
+            member_ports = parts[4:] if len(parts) > 4 else []  # Assume member ports start after protocol
             current_row = [port_channel] + member_ports
-        elif line and current_row:  # Likely a continuation line of member ports
+        elif line and current_row:  # Handling continuation lines for member ports
             continuation_ports = line.split()
             current_row.extend(continuation_ports)
 
-    if current_row:  # Don't forget to add the last port-channel if there's no new "Po" to trigger it
+    if current_row:  # Append the last processed port-channel
         data_rows.append(current_row)
 
     return data_rows
