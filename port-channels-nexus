@@ -5,23 +5,25 @@ from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticati
 
 def process_output(output):
     data_rows = []
+    current_row = []  # Hold the current line's data
+
     for line in output.splitlines():
-        line = line.strip()  # Remove any extra whitespace
-        if line.startswith(('Flags:', 'Group', '-----', '')) or 'Port-' in line:
-            continue  # Skip non-data lines based on known starts or headers
-        
-        # Split the line on spaces
+        line = line.strip()
+        if '---' in line or line.startswith(('Flags:', 'Group Port-', '')) or 'Channel' in line:
+            continue  # Skip header and irrelevant lines
+
         parts = line.split()
-        
-        # Check if this is a new port-channel line
-        if parts[0].startswith('Po') and len(parts) > 1 and parts[1].isdigit():
-            # It's a new port-channel line; initialize new row data
-            port_channel = parts[1]  # Assume the port-channel number follows 'Po'
-            member_ports = parts[4:] if len(parts) > 4 else []  # Member ports start after protocol type
-            data_rows.append(['Po' + port_channel] + member_ports)
-        elif parts and data_rows:
-            # This is a continuation line; just append parts to the last entry in data_rows
-            data_rows[-1].extend(parts)
+        if parts[0].startswith('Po'):  # This indicates the start of a new port channel entry
+            if current_row:  # If there is an ongoing row, append it before starting a new one
+                data_rows.append(current_row)
+            current_row = ['Po' + parts[0][2:]]  # Start a new row with the port channel number
+            if len(parts) > 4:  # Check if member ports are on the same line
+                current_row.extend(parts[4:])
+        elif line and current_row:  # This is a continuation line of member ports
+            current_row.extend(parts)
+
+    if current_row:  # Append the last row if it exists
+        data_rows.append(current_row)
 
     return data_rows
 
@@ -47,7 +49,7 @@ for switch in switches:
         "host": switch,
         "username": username,
         "password": password,
-        "conn_timeout": 10,  # Connection timeout in seconds
+        "conn_timeout": 10,
     }
     try:
         print(f"Connecting to {switch}...")
@@ -63,10 +65,10 @@ for switch in switches:
     except Exception as e:
         print(f"An unexpected error occurred with {switch}: {e}")
 
-# Ensure we have data before trying to find the maximum number of ports
+# Check if data was collected
 if excel_data:
     max_ports = max(len(row) - 2 for row in excel_data)  # Subtracting Switch Name and Port-Channel
-    column_headers = ['Device Name', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports + 1)]
+    column_headers = ['Switch', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports + 1)]
     df = pd.DataFrame(excel_data, columns=column_headers)
     df.to_excel("switch_port_channels.xlsx", index=False)
     print("Script completed. Check 'switch_port_channels.xlsx' for the output.")
