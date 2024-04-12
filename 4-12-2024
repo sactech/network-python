@@ -3,22 +3,25 @@ import getpass
 import yaml
 from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
 
-# Function to process the output and return a row of data
-def process_output(output, switch):
+# Function to process the output and return a list of rows with the data
+def process_output(output):
     data_rows = []
-    current_port_channel = None  # Track the current port channel
     for line in output.splitlines():
-        line = line.strip()
+        # Start of port-channel entry or a continuation line for member ports
         if line.startswith('Po'):
-            elements = line.split()
-            current_port_channel = elements[0]  # Capture the port-channel identifier
-            member_ports = elements[-1:]  # Member ports are at the end
-            data_rows.append([switch, current_port_channel] + member_ports)
-        # Handle single port entries that are continuation of the current port channel
-        elif line and not line.startswith('Group') and not line.startswith('-----') and current_port_channel:
-            # Append additional member port to the last row in data_rows
-            data_rows[-1].append(line)
-    
+            # Split the line, and only take elements after 'Eth' which indicates the protocol column
+            parts = line.split('Eth')
+            port_channel = parts[0].split()[0]  # The port-channel identifier
+            # Use the last part after splitting which should contain the member ports information
+            member_ports = 'Eth' + parts[-1].strip()  # Add 'Eth' back to the member ports
+            member_ports = member_ports.replace('(D)', '').replace('(P)', '').split()  # Clean and split member ports
+            data_rows.append([port_channel] + member_ports)
+        elif line.strip() and 'Port-' not in line:  # Continuation line for member ports
+            # Clean and split the continuation line for member ports
+            continuation_ports = line.strip().replace('(D)', '').replace('(P)', '').split()
+            # Extend the last entry in data_rows with the continuation ports
+            data_rows[-1].extend(continuation_ports)
+
     return data_rows
 
 # Load switch details from devices.yaml
@@ -49,8 +52,11 @@ for switch in switches:
         print(f"Connecting to {switch}...")
         with ConnectHandler(**device) as conn:
             output = conn.send_command(command)
-            rows = process_output(output, switch)
-            excel_data.extend(rows)
+            # Process the output from the switch
+            rows = process_output(output)
+            # Add switch name to each row and add to the main data list
+            for row in rows:
+                excel_data.append([switch] + row)
     except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
         print(f"Connection or authentication error with {switch}: {e}")
     except Exception as e:
@@ -59,10 +65,10 @@ for switch in switches:
 # Check if excel_data is not empty before proceeding
 if excel_data:
     # Determine the max number of member ports to set the column headers
-    max_ports = max(len(row) - 2 for row in excel_data)  # Subtracting Switch Name and Port-Channel
+    max_ports = max(len(row) - 1 for row in excel_data)  # Subtracting Port-Channel column
 
     # Construct the DataFrame with the appropriate number of columns
-    column_headers = ['Device Name', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports + 1)]
+    column_headers = ['Switch', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports)]
     df = pd.DataFrame(excel_data, columns=column_headers)
 
     # Create the Excel file
