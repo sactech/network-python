@@ -1,0 +1,76 @@
+import pandas as pd
+import getpass
+import yaml
+from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
+
+# Function to process the output and return a row of data
+def process_output(output, switch):
+    data_rows = []
+    current_port_channel = None  # Track the current port channel
+    for line in output.splitlines():
+        # Ignore the headers and dividers
+        if line.strip().startswith(('Group', '-----', 'Flags:', '')):
+            continue
+
+        # Identify port-channel line
+        if line.startswith('Po'):
+            elements = line.split()
+            current_port_channel = elements[0]  # Capture the port-channel identifier
+            data_rows.append([switch, current_port_channel] + elements[4:])  # Member ports assumed to start at index 4
+        # If it's a continuation line of member ports
+        elif line.strip() and current_port_channel and not line.strip().startswith('Po'):
+            member_ports = line.strip().split()
+            data_rows[-1].extend(member_ports)
+    
+    return data_rows
+
+# Load switch details from devices.yaml
+with open("devices.yaml", "r") as file:
+    data = yaml.safe_load(file)
+switches = data.get("switches", [])
+
+# Prompt for credentials
+username = input("Enter your SSH username: ")
+password = getpass.getpass("Enter your SSH password: ")
+
+# Command to execute
+command = "show port-channel summary"
+
+# Initialize a list to hold data for the Excel file
+excel_data = []
+
+# Iterate over each switch and gather data
+for switch in switches:
+    device = {
+        "device_type": "cisco_nxos",
+        "host": switch,
+        "username": username,
+        "password": password,
+        "conn_timeout": 10,
+    }
+    try:
+        print(f"Connecting to {switch}...")
+        with ConnectHandler(**device) as conn:
+            output = conn.send_command(command)
+            rows = process_output(output, switch)
+            excel_data.extend(rows)
+    except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
+        print(f"Connection or authentication error with {switch}: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred with {switch}: {e}")
+
+# Check if excel_data is not empty before proceeding
+if excel_data:
+    # Determine the max number of member ports to set the column headers
+    max_ports = max(len(row) - 2 for row in excel_data)  # Subtracting Switch Name and Port-Channel
+
+    # Construct the DataFrame with the appropriate number of columns
+    column_headers = ['Device Name', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports + 1)]
+    df = pd.DataFrame(excel_data, columns=column_headers)
+
+    # Create the Excel file
+    df.to_excel("switch_port_channels.xlsx", index=False)
+
+    print("Script completed. Check 'switch_port_channels.xlsx' for the output.")
+else:
+    print("No data was collected from the switches. Please check the connections and outputs.")
