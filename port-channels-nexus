@@ -3,6 +3,28 @@ import getpass
 import yaml
 from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
 
+def process_output(output):
+    data_rows = []
+    for line in output.splitlines():
+        line = line.strip()  # Remove any extra whitespace
+        if line.startswith(('Flags:', 'Group', '-----', '')) or 'Port-' in line:
+            continue  # Skip non-data lines based on known starts or headers
+        
+        # Split the line on spaces
+        parts = line.split()
+        
+        # Check if this is a new port-channel line
+        if parts[0].startswith('Po') and len(parts) > 1 and parts[1].isdigit():
+            # It's a new port-channel line; initialize new row data
+            port_channel = parts[1]  # Assume the port-channel number follows 'Po'
+            member_ports = parts[4:] if len(parts) > 4 else []  # Member ports start after protocol type
+            data_rows.append(['Po' + port_channel] + member_ports)
+        elif parts and data_rows:
+            # This is a continuation line; just append parts to the last entry in data_rows
+            data_rows[-1].extend(parts)
+
+    return data_rows
+
 # Load switch details from devices.yaml
 with open("devices.yaml", "r") as file:
     data = yaml.safe_load(file)
@@ -14,29 +36,6 @@ password = getpass.getpass("Enter your SSH password: ")
 
 # Command to execute
 command = "show port-channel summary"
-
-# Function to process the output and return a row of data
-def process_output(output):
-    data_rows = []
-    current_port_channel = None
-    for line in output.splitlines():
-        # Ignore lines that do not contain relevant data
-        if line.strip().startswith(('Group', '-----', 'Flags:', '')):
-            continue
-        # Check for port-channel lines
-        elif line.startswith('Po'):
-            elements = line.split()
-            current_port_channel = elements[0]  # Keep track of the current port-channel
-            # Get member ports, considering they might be on the same line
-            member_ports = elements[4:]  # The member ports start at index 4
-            data_rows.append([current_port_channel] + member_ports)
-        # Handle wrapped lines containing only member ports
-        elif line.strip() and current_port_channel:
-            # This assumes a wrapped line contains only a single member port
-            wrapped_port = line.strip()
-            # Append the wrapped port to the last entry in data_rows
-            data_rows[-1].append(wrapped_port)
-    return data_rows
 
 # Initialize a list to hold data for the Excel file
 excel_data = []
@@ -55,7 +54,6 @@ for switch in switches:
         with ConnectHandler(**device) as conn:
             output = conn.send_command(command)
             rows = process_output(output)
-            # Prepend switch name to each row
             for row in rows:
                 excel_data.append([switch] + row)
     except NetmikoTimeoutException:
@@ -65,14 +63,12 @@ for switch in switches:
     except Exception as e:
         print(f"An unexpected error occurred with {switch}: {e}")
 
-# Determine the max number of member ports to set the column headers
-max_ports = max(len(row) - 2 for row in excel_data)  # Subtracting Switch Name and Port-Channel
-
-# Construct the DataFrame with the appropriate number of columns
-column_headers = ['Device Name', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports + 1)]
-df = pd.DataFrame(excel_data, columns=column_headers)
-
-# Create the Excel file
-df.to_excel("switch_port_channels.xlsx", index=False)
-
-print("Script completed. Check 'switch_port_channels.xlsx' for the output.")
+# Ensure we have data before trying to find the maximum number of ports
+if excel_data:
+    max_ports = max(len(row) - 2 for row in excel_data)  # Subtracting Switch Name and Port-Channel
+    column_headers = ['Device Name', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports + 1)]
+    df = pd.DataFrame(excel_data, columns=column_headers)
+    df.to_excel("switch_port_channels.xlsx", index=False)
+    print("Script completed. Check 'switch_port_channels.xlsx' for the output.")
+else:
+    print("No data was collected from the switches. Please check the connections and outputs.")
