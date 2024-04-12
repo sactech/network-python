@@ -6,21 +6,28 @@ from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticati
 # Function to process the output and return a list of rows with the data
 def process_output(output):
     data_rows = []
+    current_port_channel = None
     for line in output.splitlines():
-        # Start of port-channel entry or a continuation line for member ports
+        if 'Port-' in line or '----' in line or 'Flags:' in line:
+            continue  # Skip header and divider lines
         if line.startswith('Po'):
-            # Split the line, and only take elements after 'Eth' which indicates the protocol column
-            parts = line.split('Eth')
-            port_channel = parts[0].split()[0]  # The port-channel identifier
-            # Use the last part after splitting which should contain the member ports information
-            member_ports = 'Eth' + parts[-1].strip()  # Add 'Eth' back to the member ports
-            member_ports = member_ports.replace('(D)', '').replace('(P)', '').split()  # Clean and split member ports
-            data_rows.append([port_channel] + member_ports)
-        elif line.strip() and 'Port-' not in line:  # Continuation line for member ports
-            # Clean and split the continuation line for member ports
-            continuation_ports = line.strip().replace('(D)', '').replace('(P)', '').split()
-            # Extend the last entry in data_rows with the continuation ports
-            data_rows[-1].extend(continuation_ports)
+            try:
+                # Try to parse assuming 'Eth' comes before the member ports
+                parts = line.split()
+                port_channel = parts[0]  # The port-channel identifier
+                member_index = next(i for i, part in enumerate(parts) if 'Eth' in part)
+                member_ports = parts[member_index:]  # Get all member ports
+                data_rows.append([port_channel] + member_ports)
+                current_port_channel = port_channel
+            except Exception as e:
+                print(f"Error parsing line: '{line}'. Error: {e}")
+        elif line.strip() and current_port_channel:  # Continuation of member ports
+            try:
+                # Add continuation ports directly to the last added port-channel's list
+                continuation_ports = line.strip().split()
+                data_rows[-1].extend(continuation_ports)
+            except Exception as e:
+                print(f"Error adding continuation ports from line: '{line}'. Error: {e}")
 
     return data_rows
 
@@ -52,9 +59,7 @@ for switch in switches:
         print(f"Connecting to {switch}...")
         with ConnectHandler(**device) as conn:
             output = conn.send_command(command)
-            # Process the output from the switch
             rows = process_output(output)
-            # Add switch name to each row and add to the main data list
             for row in rows:
                 excel_data.append([switch] + row)
     except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
@@ -65,10 +70,10 @@ for switch in switches:
 # Check if excel_data is not empty before proceeding
 if excel_data:
     # Determine the max number of member ports to set the column headers
-    max_ports = max(len(row) - 1 for row in excel_data)  # Subtracting Port-Channel column
+    max_ports = max(len(row) - 2 for row in excel_data)  # Subtracting Switch Name and Port-Channel
 
     # Construct the DataFrame with the appropriate number of columns
-    column_headers = ['Switch', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports)]
+    column_headers = ['Switch', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports + 1)]
     df = pd.DataFrame(excel_data, columns=column_headers)
 
     # Create the Excel file
