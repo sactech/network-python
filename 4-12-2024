@@ -5,25 +5,28 @@ from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticati
 
 def process_output(output):
     data_rows = []
-    current_row = None  # Track the current port-channel being processed
+    current_row = []  # Initialize an empty list for current port-channel processing
 
     for line in output.splitlines():
+        # Strip the line of leading and trailing whitespace
         line = line.strip()
-        # Ignore header and non-data lines
-        if line.startswith('Flags:') or line.startswith('Group') or '---' in line or not line:
-            continue
+        print(f"Processing line: {line}")  # Debug print to see the line being processed
 
-        # Check if the line starts with port-channel info
-        if line.startswith('Po'):
+        if line.startswith('Po'):  # Detecting the start of a new port-channel entry
+            if current_row:  # If there is an existing port-channel being processed, append it first
+                data_rows.append(current_row)
+            # Reset current_row with new port-channel data
             parts = line.split()
-            port_channel = parts[0]  # The port-channel identifier
-            member_ports = parts[-1:]  # Member ports are at the end
+            port_channel = parts[0]
+            member_ports = parts[4:] if len(parts) > 4 else []  # Adjust index as necessary
             current_row = [port_channel] + member_ports
-            data_rows.append(current_row)
-        elif line:  # If the line is continuation of member ports and doesn't start with 'Po'
+        elif line and current_row:  # Handle continuation lines for member ports
             continuation_ports = line.split()
-            if current_row:  # Ensure there is an active port-channel being processed
-                current_row.extend(continuation_ports)
+            current_row.extend(continuation_ports)
+
+    # Append the last processed port-channel if any
+    if current_row:
+        data_rows.append(current_row)
 
     return data_rows
 
@@ -67,14 +70,9 @@ for switch in switches:
 if excel_data:
     # Determine the max number of member ports to set the column headers
     max_ports = max(len(row) - 2 for row in excel_data)  # Subtracting Switch Name and Port-Channel
-
-    # Construct the DataFrame with the appropriate number of columns
     column_headers = ['Switch', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports + 1)]
     df = pd.DataFrame(excel_data, columns=column_headers)
-
-    # Create the Excel file
     df.to_excel("switch_port_channels.xlsx", index=False)
-
     print("Script completed. Check 'switch_port_channels.xlsx' for the output.")
 else:
     print("No data was collected from the switches. Please check the connections and outputs.")
