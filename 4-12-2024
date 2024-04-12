@@ -8,24 +8,25 @@ def process_output(output):
     current_row = []  # Initialize an empty list for current port-channel processing
 
     for line in output.splitlines():
-        # Strip the line of leading and trailing whitespace
         line = line.strip()
-        print(f"Processing line: {line}")  # Debug print to see the line being processed
 
-        if line.startswith('Po'):  # Detecting the start of a new port-channel entry
-            if current_row:  # If there is an existing port-channel being processed, append it first
+        # Ignore lines that are clearly headers or dividers
+        if 'Flags:' in line or 'Group Port-' in line or '---' in line or not line:
+            continue
+
+        # Handling normal port-channel lines
+        if line.startswith('Po'):
+            if current_row:  # Finish the previous row before starting a new one
                 data_rows.append(current_row)
-            # Reset current_row with new port-channel data
             parts = line.split()
             port_channel = parts[0]
-            member_ports = parts[4:] if len(parts) > 4 else []  # Adjust index as necessary
+            member_ports = parts[-1:]  # This might not be correct, adjust based on actual line structure
             current_row = [port_channel] + member_ports
-        elif line and current_row:  # Handle continuation lines for member ports
+        elif line and current_row:  # Likely a continuation of member ports
             continuation_ports = line.split()
             current_row.extend(continuation_ports)
 
-    # Append the last processed port-channel if any
-    if current_row:
+    if current_row:  # Add the last processed row
         data_rows.append(current_row)
 
     return data_rows
@@ -69,7 +70,7 @@ for switch in switches:
 # Check if excel_data is not empty before proceeding
 if excel_data:
     # Determine the max number of member ports to set the column headers
-    max_ports = max(len(row) - 2 for row in excel_data)  # Subtracting Switch Name and Port-Channel
+    max_ports = max(len(row) - 1 for row in excel_data)  # Subtracting Port-Channel
     column_headers = ['Switch', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports + 1)]
     df = pd.DataFrame(excel_data, columns=column_headers)
     df.to_excel("switch_port_channels.xlsx", index=False)
