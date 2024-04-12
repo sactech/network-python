@@ -3,31 +3,27 @@ import getpass
 import yaml
 from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
 
-# Function to process the output and return a list of rows with the data
 def process_output(output):
     data_rows = []
-    current_port_channel = None
+    current_row = None  # Track the current port-channel being processed
+
     for line in output.splitlines():
-        if 'Port-' in line or '----' in line or 'Flags:' in line:
-            continue  # Skip header and divider lines
+        line = line.strip()
+        # Ignore header and non-data lines
+        if line.startswith('Flags:') or line.startswith('Group') or '---' in line or not line:
+            continue
+
+        # Check if the line starts with port-channel info
         if line.startswith('Po'):
-            try:
-                # Try to parse assuming 'Eth' comes before the member ports
-                parts = line.split()
-                port_channel = parts[0]  # The port-channel identifier
-                member_index = next(i for i, part in enumerate(parts) if 'Eth' in part)
-                member_ports = parts[member_index:]  # Get all member ports
-                data_rows.append([port_channel] + member_ports)
-                current_port_channel = port_channel
-            except Exception as e:
-                print(f"Error parsing line: '{line}'. Error: {e}")
-        elif line.strip() and current_port_channel:  # Continuation of member ports
-            try:
-                # Add continuation ports directly to the last added port-channel's list
-                continuation_ports = line.strip().split()
-                data_rows[-1].extend(continuation_ports)
-            except Exception as e:
-                print(f"Error adding continuation ports from line: '{line}'. Error: {e}")
+            parts = line.split()
+            port_channel = parts[0]  # The port-channel identifier
+            member_ports = parts[-1:]  # Member ports are at the end
+            current_row = [port_channel] + member_ports
+            data_rows.append(current_row)
+        elif line:  # If the line is continuation of member ports and doesn't start with 'Po'
+            continuation_ports = line.split()
+            if current_row:  # Ensure there is an active port-channel being processed
+                current_row.extend(continuation_ports)
 
     return data_rows
 
