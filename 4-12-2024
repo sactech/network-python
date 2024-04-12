@@ -8,19 +8,16 @@ def process_output(output, switch):
     data_rows = []
     current_port_channel = None  # Track the current port channel
     for line in output.splitlines():
-        # Ignore the headers and dividers
-        if line.strip().startswith(('Group', '-----', 'Flags:', '')):
-            continue
-
-        # Identify port-channel line
+        line = line.strip()
         if line.startswith('Po'):
             elements = line.split()
             current_port_channel = elements[0]  # Capture the port-channel identifier
-            data_rows.append([switch, current_port_channel] + elements[4:])  # Member ports assumed to start at index 4
-        # If it's a continuation line of member ports
-        elif line.strip() and current_port_channel and not line.strip().startswith('Po'):
-            member_ports = line.strip().split()
-            data_rows[-1].extend(member_ports)
+            member_ports = elements[-1:]  # Member ports are at the end
+            data_rows.append([switch, current_port_channel] + member_ports)
+        # Handle single port entries that are continuation of the current port channel
+        elif line and not line.startswith('Group') and not line.startswith('-----') and current_port_channel:
+            # Append additional member port to the last row in data_rows
+            data_rows[-1].append(line)
     
     return data_rows
 
