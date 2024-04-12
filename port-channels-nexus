@@ -5,26 +5,29 @@ from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticati
 
 def process_output(output):
     data_rows = []
-    current_ports = []  # To store ongoing port-channel's member ports
+    current_row = []
 
     for line in output.splitlines():
         line = line.strip()
+        if '---' in line or line.startswith(('Flags:', 'Group Port-', '')):
+            continue  # Skip header and irrelevant lines
+        
         if line.startswith('Po'):
-            if current_ports:  # If there's an ongoing port-channel, finalize it
-                data_rows.append(current_ports)
-            # Start a new port-channel entry
-            parts = line.split(maxsplit=4)  # Split into components, with member ports as the last component
-            if len(parts) == 5:
-                port_channel, status, ptype, protocol, members = parts
-                current_ports = [port_channel, status, ptype, protocol] + members.split()
+            if current_row:  # If there is an ongoing row, append it before starting a new one
+                data_rows.append(current_row)
+            parts = line.split()
+            port_channel = parts[0]
+            if len(parts) > 4:  # Assuming that the line contains member ports
+                member_ports = parts[4:]  # Extracting member ports
             else:
-                current_ports = parts  # In case the line is malformed
-        elif line and current_ports:  # Handling continuation lines for member ports
+                member_ports = []
+            current_row = [port_channel] + member_ports
+        elif line and current_row:  # Likely a continuation line of member ports
             continuation_ports = line.split()
-            current_ports.extend(continuation_ports)
+            current_row.extend(continuation_ports)
 
-    if current_ports:  # Don't forget to add the last port-channel if there's no new "Po" to trigger it
-        data_rows.append(current_ports)
+    if current_row:  # Don't forget to add the last port-channel if there's no new "Po" to trigger it
+        data_rows.append(current_row)
 
     return data_rows
 
@@ -58,19 +61,16 @@ for switch in switches:
             output = conn.send_command(command)
             rows = process_output(output)
             for row in rows:
-                excel_data.append([switch] + row)  # Prepend switch name to each row
-    except NetmikoTimeoutException:
-        print(f"Connection timed out for {switch}. The device might be unreachable or offline.")
-    except NetmikoAuthenticationException:
-        print(f"Authentication failed for {switch}. Check the username/password.")
+                excel_data.append([switch] + row)
+    except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
+        print(f"Connection or authentication error with {switch}: {e}")
     except Exception as e:
         print(f"An unexpected error occurred with {switch}: {e}")
 
 # Check if data was collected
 if excel_data:
-    # Determine the maximum number of columns for member ports
-    max_ports = max(len(row) - 5 for row in excel_data)  # Adjust column count based on expected data columns
-    column_headers = ['Switch', 'Port-Channel', 'Status', 'Type', 'Protocol'] + [f'Member Port {i+1}' for i in range(max_ports)]
+    max_ports = max(len(row) - 1 for row in excel_data)  # Subtracting Port-Channel
+    column_headers = ['Switch', 'Port-Channel'] + [f'Member Port {i}' for i in range(1, max_ports + 1)]
     df = pd.DataFrame(excel_data, columns=column_headers)
     df.to_excel("switch_port_channels.xlsx", index=False)
     print("Script completed. Check 'switch_port_channels.xlsx' for the output.")
