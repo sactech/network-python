@@ -4,7 +4,6 @@ import yaml
 import logging
 import re
 from netmiko import ConnectHandler
-from openpyxl import Workbook
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -28,19 +27,19 @@ def execute_command(device_info, command):
 def parse_show_interface_description(output):
     desc_entries = {}
     for line in output.splitlines():
-        match = re.match(r'^(mgmt0|Eth\d+/\d+(/\d+)?|Po\d+)\s+(.*)', line, re.IGNORECASE)
+        match = re.match(r'^(mgmt0|Tunnel\d+|Eth\d+/\d+(/\d+)?|Po\d+)\s+(.*)', line, re.IGNORECASE)
         if match:
             interface, description = match.groups()[0], match.groups()[-1]
-            desc_entries[interface.strip()] = description.strip()
+            desc_entries[interface.strip().lower()] = description.strip()
     return desc_entries
 
 def parse_show_interface_brief(output):
     brief_entries = {}
     for line in output.splitlines():
-        match = re.match(r'^(mgmt0|Eth\d+/\d+(/\d+)?|Po\d+)\s+\S+\s+\S+\s+\S+\s+(\w+)', line, re.IGNORECASE)
+        match = re.match(r'^(mgmt0|Tunnel\d+|Eth\d+/\d+(/\d+)?|Po\d+)\s+\S+\s+\S+\s+\S+\s+(\w+)', line, re.IGNORECASE)
         if match:
             interface, status = match.groups()[0], match.groups()[-1]
-            brief_entries[interface] = {'Status': status}
+            brief_entries[interface.lower()] = {'Status': status}
     return brief_entries
 
 def parse_show_mac_address_table(output):
@@ -49,14 +48,14 @@ def parse_show_mac_address_table(output):
         match = re.match(r'^\*\s+\d+\s+([0-9a-f:.]+)\s+dynamic\s+.*\s+(\S+)', line, re.IGNORECASE)
         if match:
             mac_address, port = match.groups()
-            mac_entries.setdefault(port, []).append(mac_address)
+            mac_entries.setdefault(port.lower(), []).append(mac_address)
     return mac_entries
 
 def combine_data(device, brief_data, desc_data, mac_data):
     combined_data = []
     for interface, details in brief_data.items():
-        mac_addresses = mac_data.get(interface, ['N/A'])
-        description = desc_data.get(interface, 'No description')
+        mac_addresses = mac_data.get(interface.lower(), ['N/A'])
+        description = desc_data.get(interface.lower(), 'No description')
         status = details['Status']
         for mac in mac_addresses:
             combined_data.append({
@@ -70,7 +69,7 @@ def combine_data(device, brief_data, desc_data, mac_data):
 
 def main():
     devices = read_device_info()
-    if not devices:  # Ensure there are devices to process
+    if not devices:
         logging.error("No devices found. Check your YAML file.")
         return
 
@@ -101,8 +100,8 @@ def main():
 
     if all_data:
         df = pd.DataFrame(all_data)
-        df.to_excel('network_data.xlsx', index=False)
-        logging.info("Data successfully saved to network_data.xlsx.")
+        df.to_excel('network_data_combined.xlsx', index=False)
+        logging.info("Data successfully saved to network_data_combined.xlsx.")
     else:
         logging.warning("No data collected.")
 
