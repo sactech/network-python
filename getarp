@@ -82,8 +82,8 @@ def fetch_arp_data(device, username, password, device_type):
 # Main execution function
 def main():
     devices = load_devices('devices.yaml')
-    username = getpass.getuser()
-    password = getpass.getpass('Password: ')
+    username = input("Enter your username: ")
+    password = getpass.getpass("Enter your password: ")
     
     results = pd.DataFrame()
     
