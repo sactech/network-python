@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def read_device_info(file_path='devices.yaml'):
     with open(file_path) as file:
         devices = yaml.safe_load(file)
-        return devices.get('switches', [])
+        return devices.get('switches', [])  # Return only the switches list
 
 def execute_commands(device_info):
     commands = {
@@ -34,41 +34,45 @@ def execute_commands(device_info):
 def parse_data(device_name, results):
     parsed_data = []
     if results:
-        # Parse interfaces from 'show interface brief'
-        interfaces = {}
+        # Parse interface status
+        status_data = {}
         lines = results['status'].splitlines()
         for line in lines:
-            match = re.match(r'^(mgmt0|Eth\d+/\d+|Po\d+)\s', line, re.IGNORECASE)
+            match = re.match(r'^(mgmt0|Eth\d+/\d+(/\d+)?|Po\d+)\s+\S+\s+\S+\s+\S+\s+(\w+)\s+', line, re.IGNORECASE)
             if match:
-                interface = match.groups()[0].lower()
-                interfaces[interface] = {'status': 'active'}  # Placeholder for actual status
+                interface, _, status = match.groups()
+                status_data[interface.lower()] = status
 
-        # Parse descriptions
+        # Combine all data
         lines = results['desc'].splitlines()
         for line in lines:
-            match = re.match(r'^(mgmt0|Eth\d+/\d+|Po\d+)\s.*\s+(\S+)$', line, re.IGNORECASE)
+            match = re.match(r'^(mgmt0|Eth\d+/\d+(/\d+)?|Po\d+)\s+(.*)', line, re.IGNORECASE)
             if match:
-                interface, description = match.groups()
+                interface, _, description = match.groups()
                 interface = interface.lower()
-                if interface in interfaces:
-                    interfaces[interface]['description'] = description
-
-        # Parse MAC addresses and correlate
-        lines = results['mac'].splitlines()
-        for line in lines:
-            match = re.match(r'^\*\s+\d+\s+([0-9a-f:.]+)\s+dynamic\s+.*\s+(Eth\d+/\d+|Po\d+)$', line, re.IGNORECASE)
-            if match:
-                mac, interface = match.groups()
-                interface = interface.lower()
-                if interface in interfaces:
-                    entry = interfaces[interface].copy()
-                    entry['mac_address'] = mac
-                    parsed_data.append({
-                        'Device': device_name,
-                        'Interface': interface,
-                        'Description': entry.get('description', 'No description'),
-                        'MAC Address': entry['mac_address']
-                    })
+                if interface in status_data:  # Ensure only interfaces with status are included
+                    mac_addresses = []
+                    mac_lines = results['mac'].splitlines()
+                    for mac_line in mac_lines:
+                        mac_match = re.match(r'^\*\s+\d+\s+([0-9a-f:.]+)\s+dynamic\s+.*\s+' + re.escape(interface) + r'$', mac_line, re.IGNORECASE)
+                        if mac_match:
+                            mac_addresses.append(mac_match.group(1))
+                    for mac_address in mac_addresses:
+                        parsed_data.append({
+                            'Device': device_name,
+                            'Interface': interface,
+                            'Status': status_data[interface],
+                            'Description': description.strip(),
+                            'MAC Address': mac_address
+                        })
+                    if not mac_addresses:
+                        parsed_data.append({
+                            'Device': device_name,
+                            'Interface': interface,
+                            'Status': status_data[interface],
+                            'Description': description.strip(),
+                            'MAC Address': 'No MAC Address Found'
+                        })
 
     return parsed_data
 
