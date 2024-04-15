@@ -11,109 +11,96 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def read_device_info(file_path='devices.yaml'):
     with open(file_path) as file:
         devices = yaml.safe_load(file)
-    return devices
+        return devices.get('switches', [])  # Return only the switches list
 
-def execute_command(device_info, command):
+def execute_commands(device_info):
+    commands = {
+        'desc': "show interface description",
+        'mac': "show mac address-table",
+        'status': "show interface brief"  # Command to fetch interface status
+    }
+    results = {}
     try:
         logging.info(f"Connecting to device: {device_info['host']}")
         with ConnectHandler(**device_info) as ssh:
-            output = ssh.send_command(command)
-            logging.debug(f"Command: {command}\nOutput:\n{output}")
-            return output
+            for key, command in commands.items():
+                output = ssh.send_command(command)
+                results[key] = output
+                logging.debug(f"Command: {command}\nOutput:\n{output}")
     except Exception as e:
-        logging.error(f"Failed to execute command on {device_info['host']}: {e}")
-        return ""
+        logging.error(f"Failed to execute commands on {device_info['host']}: {e}")
+    return results
 
-def parse_show_interface_description(output):
-    desc_entries = {}
-    for line in output.splitlines():
-        match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+(.*)', line)
-        if match:
-            interface, description = match.groups()
-            desc_entries[interface.strip()] = description.strip()
-    return desc_entries
+def parse_data(device_name, results):
+    parsed_data = []
+    if results:
+        # Parse status from 'show interface brief'
+        status_data = {}
+        lines = results['status'].splitlines()
+        for line in lines:
+            match = re.match(r'^(Eth\d+/\d+)\s+\S+\s+\S+\s+\S+\s+(\S+)\s+.*$', line)
+            if match:
+                interface, status = match.groups()
+                status_data[interface.lower()] = status
 
-def parse_show_interface_brief(output):
-    brief_entries = {}
-    for line in output.splitlines():
-        match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+\S+\s+(\S+)\s+\S+\s+\S+', line)
-        if match:
-            interface, status = match.groups()
-            brief_entries[interface] = {'Status': status}
-    return brief_entries
+        # Parse description and integrate status
+        desc_data = {}
+        lines = results['desc'].splitlines()
+        for line in lines:
+            match = re.match(r'^(mgmt0|Eth\d+/\d+|Po\d+|port-channel\d+|Lo\d+)\s+(up|down|admin down)\s+(.*)', line, re.IGNORECASE)
+            if match:
+                interface, _, description = match.groups()
+                interface_key = interface.lower()
+                desc_data[interface_key] = {'description': description, 'status': status_data.get(interface_key, 'unknown')}
 
-def parse_show_mac_address_table(output):
-    mac_entries = {}
-    for line in output.splitlines():
-        match = re.match(r'^\*\s+\S+\s+([0-9a-fA-F.:]+)\s+\S+\s+(\S+)', line)
-        if match:
-            mac_address, port = match.groups()
-            mac_entries.setdefault(port, []).append(mac_address)
-    return mac_entries
+        # Parse MAC addresses
+        mac_data = {}
+        lines = results['mac'].splitlines()
+        for line in lines:
+            match = re.match(r'^\*\s+(\d+)\s+([0-9a-f\.]+)\s+dynamic\s+-\s+F\s+F\s+(.+)$', line, re.IGNORECASE)
+            if match:
+                vlan, mac, interface = match.groups()
+                interface_key = interface.strip().lower()
+                if interface_key in desc_data:
+                    mac_data.setdefault(interface_key, []).append(mac)
 
-def parse_show_arp(output):
-    arp_entries = {}
-    for line in output.splitlines():
-        match = re.match(r'(\d{1,3}(?:\.\d{1,3}){3})\s+[\d\w]+\s+([0-9a-fA-F.:]+)\s+\S+\s+\S+', line)
-        if match:
-            ip_address, mac_address = match.groups()
-            arp_entries[mac_address.lower()] = ip_address
-    return arp_entries
+        # Combine data
+        for interface, info in desc_data.items():
+            parsed_data.append({
+                'Device': device_name,
+                'Interface': interface,
+                'Status': info['status'],
+                'Description': info['description'],
+                'MAC Address': ', '.join(mac_data.get(interface, ['N/A']))
+            })
 
-def combine_data(device, brief_data, desc_data, mac_data, arp_data=None):
-    combined_data = []
-    for port, details in brief_data.items():
-        mac_addresses = mac_data.get(port, ['N/A'])
-        ip_addresses = [arp_data.get(mac.lower(), 'N/A') for mac in mac_addresses] if arp_data else ['N/A']
-        combined_entry = {
-            'Device': device,
-            'Port': port,
-            'Description': desc_data.get(port, 'No description'),
-            'Status': details['Status'],
-            'MAC Address': ', '.join(mac_addresses),
-            'IP Address': ', '.join(ip_addresses)
-        }
-        combined_data.append(combined_entry)
-    return combined_data
+    return parsed_data
 
 def main():
-    devices = read_device_info()
-    if not devices:  # Ensure there are devices to process
-        logging.error("No devices found. Check your YAML file.")
+    switches = read_device_info()
+    if not switches:
+        logging.error("No switch data found. Check your YAML file.")
         return
 
     username = input("Enter SSH username: ")
     password = getpass.getpass("Enter SSH password: ")
 
     all_data = []
-
-    for device_category, device_list in devices.items():
-        for device_hostname in device_list:
-            device_info = {
-                'device_type': 'cisco_ios' if device_category == 'routers' else 'cisco_nxos',
-                'host': device_hostname,
-                'username': username,
-                'password': password,
-            }
-
-            logging.info(f"Processing {device_category}: {device_hostname}")
-            desc_output = execute_command(device_info, "show interface description")
-            brief_output = execute_command(device_info, "show interface brief")
-            mac_output = execute_command(device_info, "show mac address-table")
-            arp_output = execute_command(device_info, "show ip arp") if device_category == 'routers' else execute_command(device_info, "show ip arp vrf all")
-
-            desc_data = parse_show_interface_description(desc_output)
-            brief_data = parse_show_interface_brief(brief_output)
-            mac_data = parse_show_mac_address_table(mac_output)
-            arp_data = parse_show_arp(arp_output) if arp_output else {}
-
-            combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data, arp_data)
-            all_data.extend(combined_data)
+    for switch in switches:
+        device_info = {
+            'device_type': 'cisco_nxos',
+            'host': switch,
+            'username': username,
+            'password': password,
+        }
+        results = execute_commands(device_info)
+        switch_data = parse_data(switch, results)
+        all_data.extend(switch_data)
 
     if all_data:
         df = pd.DataFrame(all_data)
-        df.to_csv('network_data_combined.csv', index=False)
-        logging.info("Data successfully saved to network_data_combined.csv.")
+        df.to_excel('network_data.xlsx', index=False)
+        logging.info("Data successfully saved to network_data.xlsx.")
     else:
         logging.warning("No data collected.")
 
