@@ -47,22 +47,21 @@ def parse_data(device_name, results):
         desc_data = {}
         lines = results['desc'].splitlines()
         for line in lines:
-            match = re.match(r'^(mgmt0|Eth\d+/\d+|Po\d+|port-channel\d+|Lo\d+)\s+(up|down|admin down)\s+(.*)', line, re.IGNORECASE)
+            match = re.match(r'^(mgmt0|Eth\d+/\d+|Po\d+|port-channel\d+|Lo\d+|Vlan\d+)\s+(up|down|admin down|--)\s*(.*)', line, re.IGNORECASE)
             if match:
                 interface, _, description = match.groups()
-                interface_key = interface.lower()
-                desc_data[interface_key] = {'description': description, 'status': status_data.get(interface_key, 'unknown')}
+                desc_data[interface.lower()] = {'description': description, 'status': status_data.get(interface.lower(), 'unknown')}
 
         # Parse MAC addresses
         mac_data = {}
         lines = results['mac'].splitlines()
         for line in lines:
-            match = re.match(r'^\*\s+(\d+)\s+([0-9a-f\.]+)\s+dynamic\s+-\s+F\s+F\s+(.+)$', line, re.IGNORECASE)
+            match = re.match(r'^\*\s+(\d+)\s+([0-9a-f.:]+)\s+dynamic\s+-\s+F\s+F\s+(.+)$', line, re.IGNORECASE)
             if match:
                 vlan, mac, interface = match.groups()
-                interface_key = interface.strip().lower()
-                if interface_key in desc_data:
-                    mac_data.setdefault(interface_key, []).append(mac)
+                interface = interface.strip().lower()
+                if interface in desc_data:
+                    mac_data.setdefault(interface, []).append(mac)
 
         # Combine data
         for interface, info in desc_data.items():
