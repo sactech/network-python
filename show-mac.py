@@ -38,7 +38,7 @@ def parse_data(device_name, results):
         status_data = {}
         lines = results['status'].splitlines()
         for line in lines:
-            match = re.match(r'^(Eth\d+/\d+)\s+\S+\s+\S+\s+\S+\s+(\S+)\s+.*$', line)
+            match = re.match(r'^(Eth\d+/\d+)\s+\d+\s+eth\s+\w+\s+(\w+)\s+.*$', line)
             if match:
                 interface, status = match.groups()
                 status_data[interface.lower()] = status
