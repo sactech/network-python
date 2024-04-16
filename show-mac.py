@@ -44,11 +44,13 @@ def parse_show_interface_brief(output):
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
+    pattern = r'([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})\s+\S+\s+\S+\s+(\S+)$'
     for line in output.splitlines():
-        match = re.match(r'^\*\s+\d+\s+([0-9a-fA-F.:]+)\s+\S+\s+\S+\s+(\S+)', line)
+        match = re.search(pattern, line)
         if match:
-            mac_address, port = match.groups()
-            mac_entries.setdefault(port, []).append(mac_address)
+            mac_address, interface = match.groups()
+            interface = interface.upper()  # Normalize the interface name
+            mac_entries.setdefault(interface, []).append(mac_address)
     return mac_entries
 
 def combine_data(device, brief_data, desc_data, mac_data):
