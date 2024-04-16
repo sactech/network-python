@@ -60,14 +60,15 @@ def combine_data(device, brief_data, desc_data, mac_data):
     combined_data = []
     for port, details in brief_data.items():
         mac_addresses = mac_data.get(port, ['N/A'])
-        combined_entry = {
-            'Device': device,
-            'Port': port,
-            'Description': desc_data.get(port, 'No description'),
-            'Status': details['Status'],
-            'MAC Address': ', '.join(mac_addresses)
-        }
-        combined_data.append(combined_entry)
+        for mac_address in mac_addresses:
+            combined_entry = {
+                'Device': device,
+                'Port': port,
+                'Description': desc_data.get(port, 'No description'),
+                'Status': details['Status'],
+                'MAC Address': mac_address
+            }
+            combined_data.append(combined_entry)
     return combined_data
 
 def main():
