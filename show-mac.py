@@ -44,7 +44,7 @@ def parse_show_interface_brief(output):
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
-    pattern = r'\*\s+\d+\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+dynamic\s+-\s+F\s+F\s+(\S+)'
+    pattern = r'\*\s+\d+\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+\S+\s+\S+\s+\S+\s+\S+\s+(\S+)$'
     for line in output.splitlines():
         match = re.search(pattern, line, re.IGNORECASE)
         if match:
@@ -95,7 +95,7 @@ def main():
 
         desc_data = parse_show_interface_description(desc_output)
         brief_data = parse_show_interface_brief(brief_output)
-        mac_data = parse_show_mac_address_table(mac_output)
+        mac_data = parse_show_interface_mac_address_table(mac_output)
 
         combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
         all_data.extend(combined_data)
