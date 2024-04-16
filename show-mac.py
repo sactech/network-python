@@ -6,7 +6,7 @@ import re
 from netmiko import ConnectHandler
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def read_device_info(file_path='devices.yaml'):
     with open(file_path) as file:
@@ -27,7 +27,7 @@ def execute_command(device_info, command):
 def parse_show_interface_description(output):
     desc_entries = {}
     for line in output.splitlines():
-        match = re.match(r'^(Eth[\d/]+|Po\d+|Lo\d+|mgmt\d)\s+(.*)', line)
+        match = re.match(r'^(Eth[\d/]+|Po\d+|Lo\d+|mgmt\d|Tunnel\d+)\s+(.*)', line)
         if match:
             interface, description = match.groups()
             desc_entries[interface.strip()] = description.strip()
@@ -36,7 +36,7 @@ def parse_show_interface_description(output):
 def parse_show_interface_brief(output):
     brief_entries = {}
     for line in output.splitlines():
-        match = re.match(r'^(Eth[\d/]+|Po\d+|Lo\d+|mgmt\d)\s+\S+\s+\S+\s+\S+\s+(\S+)\s.*', line)
+        match = re.match(r'^(Eth[\d/]+|Po\d+|Lo\d+|mgmt\d|Tunnel\d+)\s+\S+\s+\S+\s+\S+\s+(\S+)\s.*', line)
         if match:
             interface, status = match.groups()
             brief_entries[interface] = {'Status': status}
@@ -44,14 +44,18 @@ def parse_show_interface_brief(output):
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
-    # Adjusted pattern for MAC address and interface extraction
-    pattern = r'([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+\S+\s+\S+\s+(\S+)$'
+    # Adjusted pattern to better match and allow for Tunnel interfaces
+    pattern = r'([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+\S+\s+\S+\s+([\w/]+)$'
     for line in output.splitlines():
         match = re.search(pattern, line, re.IGNORECASE)
         if match:
             mac_address, interface = match.groups()
             interface = interface.upper()  # Normalize the interface name
-            mac_entries.setdefault(interface, []).append(mac_address)
+            if interface not in mac_entries:
+                mac_entries[interface] = []
+            mac_entries[interface].append(mac_address)
+        else:
+            logging.debug(f"Line skipped: {line}")
     return mac_entries
 
 def combine_data(device, brief_data, desc_data, mac_data):
