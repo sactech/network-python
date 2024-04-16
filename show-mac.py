@@ -27,33 +27,31 @@ def execute_command(device_info, command):
 def parse_show_interface_description(output):
     desc_entries = {}
     for line in output.splitlines():
-        match = re.match(r'^(Eth[\d/]+|Po\d+|Lo\d+|mgmt\d|Tunnel\d+)\s+(.*)', line)
+        match = re.match(r'^(Eth[\d/]+|Po\d+|Lo\d+|mgmt\d|Tunnel\d+)\s+(.*)', line, re.IGNORECASE)
         if match:
             interface, description = match.groups()
-            desc_entries[interface.strip()] = description.strip()
+            desc_entries[interface.strip().lower()] = description.strip()
     return desc_entries
 
 def parse_show_interface_brief(output):
     brief_entries = {}
     for line in output.splitlines():
-        match = re.match(r'^(Eth[\d/]+|Po\d+|Lo\d+|mgmt\d|Tunnel\d+)\s+\S+\s+\S+\s+\S+\s+(\S+)\s.*', line)
+        match = re.match(r'^(Eth[\d/]+|Po\d+|Lo\d+|mgmt\d|Tunnel\d+)\s+\S+\s+\S+\s+\S+\s+(\S+)\s.*', line, re.IGNORECASE)
         if match:
             interface, status = match.groups()
-            brief_entries[interface] = {'Status': status}
+            brief_entries[interface.lower()] = {'Status': status}
     return brief_entries
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
-    pattern = r'([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+dynamic\s+.*\s+(\S+)$'
+    pattern = r'([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+dynamic\s+.*?\s+(\S+)(?:\s|$)'
     for line in output.splitlines():
         match = re.search(pattern, line, re.IGNORECASE)
         if match:
             mac_address, interface = match.groups()
-            if interface not in mac_entries:
-                mac_entries[interface] = []
-            mac_entries[interface].append(mac_address)
-        else:
-            logging.debug(f"Line skipped or not matched: {line}")
+            if interface.lower() not in mac_entries:
+                mac_entries[interface.lower()] = []
+            mac_entries[interface.lower()].append(mac_address)
     return mac_entries
 
 def combine_data(device, brief_data, desc_data, mac_data):
