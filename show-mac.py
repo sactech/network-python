@@ -6,7 +6,7 @@ import re
 from netmiko import ConnectHandler
 
 # Setup logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def read_device_info(file_path='devices.yaml'):
     with open(file_path) as file:
@@ -44,7 +44,7 @@ def parse_show_interface_brief(output):
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
-    pattern = r'([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+dynamic\s+-\s+F\s+F\s+([\w/-]+)$'
+    pattern = r'([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+dynamic\s+.*\s+(\S+)$'
     for line in output.splitlines():
         match = re.search(pattern, line, re.IGNORECASE)
         if match:
