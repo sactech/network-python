@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def read_device_info(file_path='devices.yaml'):
     with open(file_path) as file:
         devices = yaml.safe_load(file)
-    return devices['switches']
+    return devices
 
 def execute_command(device_info, command):
     try:
@@ -27,49 +27,47 @@ def execute_command(device_info, command):
 def parse_show_interface_description(output):
     desc_entries = {}
     for line in output.splitlines():
-        match = re.match(r'^(mgmt0|Tunnel\d+|Eth\d+/\d+(/\d+)?|Po\d+)\s+(.*)', line, re.IGNORECASE)
+        match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+)\s+(.*)', line)
         if match:
-            interface, description = match.groups()[0], match.groups()[-1]
-            desc_entries[interface.strip().lower()] = description.strip()
+            interface, description = match.groups()
+            desc_entries[interface.strip().lower()] = description.strip()  # Lower case for case insensitivity
     return desc_entries
 
 def parse_show_interface_brief(output):
     brief_entries = {}
     for line in output.splitlines():
-        match = re.match(r'^(mgmt0|Tunnel\d+|Eth\d+/\d+(/\d+)?|Po\d+)\s+\S+\s+\S+\s+\S+\s+(\w+)', line, re.IGNORECASE)
+        match = re.match(r'^(mgmt0|Eth[\d/]+|Po\d+|Lo\d+|Tunnel\d+)\s+\S+\s+(\S+)\s+\S+\s+\S+', line)
         if match:
-            interface, status = match.groups()[0], match.groups()[-1]
-            brief_entries[interface.lower()] = {'Status': status}
+            interface, status = match.groups()
+            brief_entries[interface.lower()] = {'Status': status}  # Lower case for case insensitivity
     return brief_entries
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
     for line in output.splitlines():
-        match = re.match(r'^\*\s+\d+\s+([0-9a-f:.]+)\s+dynamic\s+.*\s+(\S+)', line, re.IGNORECASE)
+        match = re.match(r'^\*\s+\S+\s+([0-9a-fA-F.:]+)\s+\S+\s+(\S+)', line)
         if match:
             mac_address, port = match.groups()
-            mac_entries.setdefault(port.lower(), []).append(mac_address)
+            mac_entries.setdefault(port.lower(), []).append(mac_address)  # Lower case for case insensitivity
     return mac_entries
 
 def combine_data(device, brief_data, desc_data, mac_data):
     combined_data = []
-    for interface, details in brief_data.items():
-        mac_addresses = mac_data.get(interface.lower(), ['N/A'])
-        description = desc_data.get(interface.lower(), 'No description')
-        status = details['Status']
-        for mac in mac_addresses:
-            combined_data.append({
-                'Device': device,
-                'Interface': interface,
-                'Status': status,
-                'Description': description,
-                'MAC Address': mac
-            })
+    for port, details in brief_data.items():
+        mac_addresses = mac_data.get(port, ['N/A'])
+        combined_entry = {
+            'Device': device,
+            'Port': port.upper(),  # Convert back to upper for readability in output
+            'Description': desc_data.get(port, 'No description'),
+            'Status': details['Status'],
+            'MAC Address': ', '.join(mac_addresses)
+        }
+        combined_data.append(combined_entry)
     return combined_data
 
 def main():
     devices = read_device_info()
-    if not devices:
+    if not devices:  # Ensure there are devices to process
         logging.error("No devices found. Check your YAML file.")
         return
 
@@ -78,25 +76,26 @@ def main():
 
     all_data = []
 
-    for device_hostname in devices:
-        device_info = {
-            'device_type': 'cisco_nxos',
-            'host': device_hostname,
-            'username': username,
-            'password': password,
-        }
+    for device_category, device_list in devices.items():
+        for device_hostname in device_list:
+            device_info = {
+                'device_type': 'cisco_nxos',  # assuming all devices are of type 'cisco_nxos'
+                'host': device_hostname,
+                'username': username,
+                'password': password,
+            }
 
-        logging.info(f"Processing device: {device_hostname}")
-        desc_output = execute_command(device_info, "show interface description")
-        brief_output = execute_command(device_info, "show interface brief")
-        mac_output = execute_command(device_info, "show mac address-table")
+            logging.info(f"Processing {device_category}: {device_hostname}")
+            desc_output = execute_command(device_info, "show interface description")
+            brief_output = execute_command(device_info, "show interface brief")
+            mac_output = execute_command(device_info, "show mac address-table")
 
-        desc_data = parse_show_interface_description(desc_output)
-        brief_data = parse_show_interface_brief(brief_output)
-        mac_data = parse_show_mac_address_table(mac_output)
+            desc_data = parse_show_interface_description(desc_output)
+            brief_data = parse_show_interface_brief(brief_output)
+            mac_data = parse_show_mac_address_table(mac_output)
 
-        combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
-        all_data.extend(combined_data)
+            combined_data = combine_data(device_hostname, brief_data, desc_data, mac_data)
+            all_data.extend(combined_data)
 
     if all_data:
         df = pd.DataFrame(all_data)
