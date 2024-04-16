@@ -6,7 +6,7 @@ import re
 from netmiko import ConnectHandler
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def read_device_info(file_path='devices.yaml'):
     with open(file_path) as file:
@@ -44,12 +44,11 @@ def parse_show_interface_brief(output):
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
-    pattern = r'([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+\S+\s+\S+\s+([\w/-]+)$'
+    pattern = r'([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+dynamic\s+-\s+F\s+F\s+([\w/-]+)$'
     for line in output.splitlines():
         match = re.search(pattern, line, re.IGNORECASE)
         if match:
             mac_address, interface = match.groups()
-            interface = interface.replace(' ', '')  # Remove any accidental spaces
             if interface not in mac_entries:
                 mac_entries[interface] = []
             mac_entries[interface].append(mac_address)
@@ -60,25 +59,15 @@ def parse_show_mac_address_table(output):
 def combine_data(device, brief_data, desc_data, mac_data):
     combined_data = []
     for port, details in brief_data.items():
-        mac_addresses = mac_data.get(port, [])
-        if not mac_addresses:  # If no MAC addresses, add a single entry with 'N/A'
-            combined_data.append({
-                'Device': device,
-                'Port': port,
-                'Description': desc_data.get(port, 'No description'),
-                'Status': details['Status'],
-                'MAC Address': 'N/A'
-            })
-        else:  # Create a new entry for each MAC address
-            for mac_address in mac_addresses:
-                combined_entry = {
-                    'Device': device,
-                    'Port': port,
-                    'Description': desc_data.get(port, 'No description'),
-                    'Status': details['Status'],
-                    'MAC Address': mac_address
-                }
-                combined_data.append(combined_entry)
+        mac_addresses = mac_data.get(port, ['N/A'])
+        combined_entry = {
+            'Device': device,
+            'Port': port,
+            'Description': desc_data.get(port, 'No description'),
+            'Status': details['Status'],
+            'MAC Address': ', '.join(mac_addresses)
+        }
+        combined_data.append(combined_entry)
     return combined_data
 
 def main():
