@@ -44,9 +44,10 @@ def parse_show_interface_brief(output):
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
-    pattern = r'([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})\s+\S+\s+\S+\s+(\S+)$'
+    # Adjusted pattern for MAC address and interface extraction
+    pattern = r'([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+\S+\s+\S+\s+(\S+)$'
     for line in output.splitlines():
-        match = re.search(pattern, line)
+        match = re.search(pattern, line, re.IGNORECASE)
         if match:
             mac_address, interface = match.groups()
             interface = interface.upper()  # Normalize the interface name
