@@ -8,10 +8,6 @@ from netmiko import ConnectHandler
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def normalize_mac(mac):
-    """Normalize the MAC address to a common format without special characters and in lowercase."""
-    return re.sub(r'[\.\-:]', '', mac).lower()
-
 def read_device_info(file_path='devices.yaml'):
     with open(file_path) as file:
         devices = yaml.safe_load(file)
@@ -48,15 +44,13 @@ def parse_show_interface_brief(output):
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
-    pattern = r'(\S+)\s+dynamic\s+.*\s+(\S+)$'  # General pattern to match MAC addresses and their associated interface
+    # Adjust the regex to accommodate different MAC address and interface formats
+    pattern = r'([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+dynamic\s+.*\s+(\S+)$'
     for line in output.splitlines():
         match = re.search(pattern, line, re.IGNORECASE)
         if match:
             mac_address, interface = match.groups()
-            mac_address = normalize_mac(mac_address)
-            if interface not in mac_entries:
-                mac_entries[interface] = []
-            mac_entries[interface].append(mac_address)
+            mac_entries.setdefault(interface, []).append(mac_address)
         else:
             logging.debug(f"Line skipped or not matched: {line}")
     return mac_entries
