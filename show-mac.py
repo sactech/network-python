@@ -44,8 +44,7 @@ def parse_show_interface_brief(output):
 
 def parse_show_mac_address_table(output):
     mac_entries = {}
-    # Adjust the regex to accommodate different MAC address and interface formats
-    pattern = r'([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+dynamic\s+.*\s+(\S+)$'
+    pattern = r'\*\s+\d+\s+([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})\s+dynamic\s+\d+\s+F\s+F\s+(\S+)'
     for line in output.splitlines():
         match = re.search(pattern, line, re.IGNORECASE)
         if match:
